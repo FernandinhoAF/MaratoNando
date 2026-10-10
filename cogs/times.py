@@ -144,17 +144,20 @@ class TimesCog(commands.Cog):
         await tratar_erro(interaction, erro)
 
     def lista_inicial(self, interaction: discord.Interaction) -> tuple[list[int], str]:
-        voz = getattr(getattr(interaction.user, "voice", None), "channel", None)
-        if voz is not None:
-            pessoas = [m.id for m in voz.members if not m.bot]
-            if pessoas:
-                return pessoas, f"quem está na call **🔊 {voz.name}**"
+        # 1º: quem está na maratona (colocou jogo ou clicou em "Tô jogando").
+        #     Tem prioridade sobre a call, porque às vezes tem gente na call só conversando.
         m = self.db.maratona_aberta(interaction.guild_id)
         if m is not None:
-            pessoas = [p.user_id for p in self.db.participantes(m.id)]
+            pessoas = self.db.jogadores(m.id)
             if pessoas:
-                return pessoas, "os participantes da maratona"
-        return [], "ninguém (não achei call nem maratona aberta)"
+                return pessoas, "quem está jogando a maratona"
+        # 2º: sem maratona, usa quem está na call.
+        voz = getattr(getattr(interaction.user, "voice", None), "channel", None)
+        if voz is not None:
+            pessoas = [p.id for p in voz.members if not p.bot]
+            if pessoas:
+                return pessoas, f"quem está na call **🔊 {voz.name}**"
+        return [], "ninguém (não achei maratona aberta nem call)"
 
     @app_commands.command(name="times", description="Sorteia times para jogos em equipe.")
     @app_commands.describe(quantidade="Quantos times (padrão: 2)")

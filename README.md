@@ -14,9 +14,11 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 - **Lista pessoal**: lembrou de um jogo no meio da semana? `/lista adicionar` guarda ele. Na maratona, ao clicar em **Adicionar jogos**, a lista aparece para você marcar o que quer colocar na roleta. Jogos sorteados saem da lista sozinhos, e os que não saíram voltam para ela quando a maratona acaba.
 - **📡 Radar de jogos**: o bot acompanha streamers escolhidos pelo servidor (ex.: alanzoka) na Twitch, vê o que eles jogam e cruza com a Steam. Só vira sugestão o jogo que é **multiplayer**, **barato** (até R$ 60, configurável) e **bem avaliado** (70%+). Dá para salvar as sugestões direto na lista pessoal, e o bot pode avisar num canal quando aparecer jogo novo.
 - **🛒 Sugestões da Steam** (`/sugestao`): jogos co-op online em alta, novidades ou em promoção, filtrados pelas tags da Steam para sobrar só friendslop: precisa ter tag de jogar junto (Online Co-Op, Party Game…) **e** de diversão (Funny, Comedy, Social Deduction, Physics…), nenhuma tag de jogo "sério" (MMO, Competitive, Sports), preço baixo e 80%+ de avaliações positivas.
-- **👥 Sorteio de times** (`/times`): começa a lista com quem está na call (ou com os participantes da maratona), pergunta se mais alguém vai jogar e só então sorteia times equilibrados.
+- **👥 Sorteio de times** (`/times`): começa a lista com quem está jogando a maratona (ou, sem maratona aberta, com quem está na call), pergunta se mais alguém vai jogar e só então sorteia times equilibrados.
 - **🧹 Chat limpo**: com `/config canal-do-bot`, o bot ganha um canal próprio onde as mensagens ficam. Em qualquer outro canal, as mensagens dele somem sozinhas depois de alguns minutos (padrão: 10). Se alguém estiver usando os botões de uma mensagem, o prazo recomeça; e o painel de uma maratona aberta só some depois que ela acaba.
 - **💸 Avisos de promoção**: a cada 6 horas o bot confere na Steam o preço dos jogos que estão nas listas pessoais. Quando um deles entra em promoção (ou o desconto aumenta), ele avisa no canal do bot marcando (com notificação) só quem tem aquele jogo na lista. O `/lista ver` também mostra quais jogos da sua lista estão em promoção.
+- **💰 Mais barato para o grupo** (`/maratona baratos`): cada pessoa vincula a Steam (ou um admin vincula por ela), e o bot cruza as bibliotecas de quem está jogando a maratona. Mostra os jogos multiplayer do mais barato para o grupo ao mais caro: o custo é o preço atual × quantas pessoas ainda não têm. Primeiro aparecem os que todo mundo já tem e os grátis.
+- **🙋 Chegou no meio?** O botão **Tô jogando** do painel coloca a pessoa na maratona mesmo sem jogo na roleta, e ela passa a contar nos times e no `/maratona baratos`.
 - **Mural da Vergonha**: `/reclamou @pessoa`, ou botão direito na pessoa → Apps → **Reclamou!**
 - **Resumo final**: o que foi jogado, em que ordem, quem escolheu, o que ficou na roleta e o ranking de reclamações.
 - **Aguenta reinícios**: tudo fica salvo em SQLite, e os botões do painel continuam funcionando depois que o bot reinicia.
@@ -30,12 +32,17 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 | `/maratona sortear` | Gira a roleta (o mesmo que o botão 🎲) | Quem organizou ou quem tem *Gerenciar servidor* |
 | `/maratona painel` | Traz o painel para o fim do chat | Qualquer pessoa |
 | `/maratona encerrar` | Encerra e mostra o resumo (pede confirmação) | Quem organizou ou quem tem *Gerenciar servidor* |
+| `/maratona baratos` | Jogos multiplayer ordenados pelo custo para o grupo (precisa da Steam vinculada) | Qualquer pessoa |
+| `/maratona incluir @pessoa` / `excluir` | Coloca/tira da maratona alguém que está jogando sem jogo na roleta | Quem organizou |
+| `/steam vincular perfil [pessoa]` | Liga a conta da Steam ao Discord (a sua, ou a de outra pessoa se você for admin) | Qualquer pessoa / admin para os outros |
+| `/steam desvincular [pessoa]` | Desliga a conta da Steam | Qualquer pessoa / admin para os outros |
+| `/steam ver` | Mostra quem da maratona tem a Steam vinculada | Qualquer pessoa |
 | `/maratona ajuda` | Explica como funciona | Qualquer pessoa |
 | `/lista adicionar [jogo]` | Guarda um jogo na sua lista pessoal (sem o nome, abre um formulário para vários) | Qualquer pessoa (só ela vê) |
 | `/lista ver` | Mostra sua lista e deixa apagar jogos dela | Qualquer pessoa (só ela vê) |
 | `/reclamou @pessoa` | Manda alguém pro Mural da Vergonha | Qualquer pessoa |
 | `/sugestao [tipo]` | Sugestões de friendslop só pela Steam: em alta, novidades ou em promoção | Qualquer pessoa |
-| `/times [quantidade]` | Monta a lista de quem vai jogar e sorteia os times (2 a 8) | Qualquer pessoa (só quem pediu sorteia) |
+| `/times [quantidade]` | Monta a lista de quem vai jogar (maratona primeiro, call depois) e sorteia os times (2 a 8) | Qualquer pessoa (só quem pediu sorteia) |
 | `/config canal-do-bot [canal]` | Define o canal do bot; fora dele, as mensagens do bot somem sozinhas (vazio = desliga) | Quem tem *Gerenciar servidor* |
 | `/config apagar-depois minutos` | Quanto tempo as mensagens ficam fora do canal do bot (0 = nunca apagar) | Quem tem *Gerenciar servidor* |
 | `/config promocoes ativo` | Liga/desliga os avisos de promoção (vão para o canal do bot) | Quem tem *Gerenciar servidor* |
@@ -92,7 +99,17 @@ O radar usa a API oficial da Twitch, que é gratuita mas pede um cadastro. Sem e
 
 Depois de ligar o bot, use `/radar adicionar-streamer alanzoka` no servidor. O bot olha os clipes do último mês para descobrir o que ele andou jogando, confere cada jogo na Steam, e daí em diante checa a cada 10 minutos o que ele está jogando ao vivo.
 
-### 5. Ligar
+### 5. (Opcional) Chave da API da Steam
+
+Usada pelo `/steam vincular` e pelo `/maratona baratos`. É gratuita.
+
+1. Entre em <https://steamcommunity.com/dev/apikey> com a sua conta da Steam.
+2. Em **Domain Name**, escreva qualquer nome (ex.: `maratonando`), aceite os termos e clique em **Register**.
+3. Copie a chave e cole no `.env` depois de `STEAM_API_KEY=`. Não mostre essa chave a ninguém.
+
+Para o bot ver os jogos de alguém, o perfil precisa estar com **Detalhes do jogo: Público** (Steam → Perfil → Editar perfil → Configurações de privacidade).
+
+### 6. Ligar
 
 ```powershell
 python bot.py
@@ -105,7 +122,7 @@ Quando aparecer `Logado como MaratoNando...`, está funcionando. Para desligar, 
 O arquivo `discloud.config` já está pronto. Na hora de subir:
 
 1. Deixe `DEV_GUILD_ID` **vazio** no `.env` (assim os comandos ficam disponíveis em todos os servidores).
-2. Compacte em um `.zip` os arquivos `bot.py`, `db.py`, `radar.py`, `sugestao.py`, `times.py`, as pastas `cogs` e `servicos`, `requirements.txt`, `discloud.config` e o `.env`.
+2. Compacte em um `.zip` os arquivos `bot.py`, `db.py`, `radar.py`, `sugestao.py`, `times.py`, `biblioteca.py`, as pastas `cogs` e `servicos`, `requirements.txt`, `discloud.config` e o `.env`.
 3. Suba o `.zip` na Discloud.
 
 > Se você testou com `DEV_GUILD_ID` e depois ligou sem ele, os comandos podem aparecer **duplicados** no servidor de testes. Para resolver, ligue o bot uma vez localmente com `DEV_GUILD_ID` preenchido e comente a linha `self.tree.copy_global_to(guild=guild)` no `bot.py`: isso limpa os comandos do servidor de testes.
@@ -128,22 +145,26 @@ MaratoNando/
 ├── radar.py           # regras do radar: o que é "friendslop" e como ranquear
 ├── sugestao.py        # leitura da busca da Steam e filtro de friendslop por tags
 ├── times.py           # divisão equilibrada em times
+├── biblioteca.py      # custo para o grupo: cruza as bibliotecas da Steam
 ├── cogs/
 │   ├── maratona.py    # comandos, botões, formulários, roleta e embeds da maratona
 │   ├── radar.py       # /radar, /sugestao e a coleta automática a cada 10 minutos
 │   ├── times.py       # /times
 │   ├── limpeza.py     # /config e a faxina das mensagens fora do canal do bot
-│   └── promocoes.py   # vigia de promoções dos jogos das listas
+│   ├── promocoes.py   # vigia de promoções dos jogos das listas
+│   └── steam.py       # /steam e o /maratona baratos
 ├── servicos/
 │   ├── twitch.py      # cliente da API oficial da Twitch
-│   └── steam.py       # consultas à loja da Steam
+│   ├── steam.py       # consultas à loja da Steam
+│   └── steam_api.py   # API oficial da Steam (perfis e bibliotecas)
 ├── tests/
 │   ├── test_db.py     # testes da maratona e da lista
 │   ├── test_radar.py  # testes do radar (com respostas reais da Steam)
 │   ├── test_sugestao.py # testes do filtro do /sugestao
 │   ├── test_times.py  # testes do sorteio de times
 │   ├── test_limpeza.py # testes da agenda de limpeza
-│   └── test_promocoes.py # testes dos avisos de promoção
+│   ├── test_promocoes.py # testes dos avisos de promoção
+│   └── test_biblioteca.py # testes do custo para o grupo e das contas Steam
 ├── requirements.txt
 ├── .env.example       # modelo do arquivo de configuração
 └── discloud.config

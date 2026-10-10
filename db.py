@@ -177,6 +177,46 @@ CREATE TABLE IF NOT EXISTS promocoes (
     original_texto TEXT,
     desde          TEXT    NOT NULL
 );
+
+-- ===== Jogadores e Steam =====
+
+-- Quem entrou na maratona sem colocar jogo (chegou no meio, por exemplo).
+CREATE TABLE IF NOT EXISTS maratona_extras (
+    maratona_id INTEGER NOT NULL REFERENCES maratonas (id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL,
+    PRIMARY KEY (maratona_id, user_id)
+);
+
+-- Conta da Steam de cada pessoa.
+CREATE TABLE IF NOT EXISTS steam_contas (
+    user_id       INTEGER PRIMARY KEY,
+    steamid       TEXT    NOT NULL,  -- ID de 17 dígitos (7656119...)
+    nome          TEXT,              -- nome do perfil na Steam
+    publico       INTEGER NOT NULL DEFAULT 0,  -- 1 = dá para ver os jogos
+    total_jogos   INTEGER NOT NULL DEFAULT 0,
+    vinculado_por INTEGER NOT NULL,
+    atualizado_em TEXT               -- última vez que a biblioteca foi lida (NULL = nunca)
+);
+
+-- Jogos que cada pessoa tem na Steam.
+CREATE TABLE IF NOT EXISTS steam_biblioteca (
+    user_id INTEGER NOT NULL,
+    appid   INTEGER NOT NULL,
+    PRIMARY KEY (user_id, appid)
+);
+
+-- O que a loja diz de cada jogo (multiplayer? preço?), guardado para não perguntar toda hora.
+CREATE TABLE IF NOT EXISTS steam_apps (
+    appid          INTEGER PRIMARY KEY,
+    nome           TEXT    NOT NULL,
+    gratis         INTEGER NOT NULL,
+    preco_centavos INTEGER,
+    preco_texto    TEXT,
+    desconto       INTEGER NOT NULL DEFAULT 0,
+    multiplayer    INTEGER NOT NULL,
+    coop           INTEGER NOT NULL,
+    verificado_em  TEXT    NOT NULL
+);
 """
 
 # Colunas criadas depois da primeira versão: adicionadas sozinhas em bancos antigos.
@@ -430,6 +470,45 @@ class Database:
 
     def jogos_do_usuario(self, maratona_id: int, user_id: int) -> list[Jogo]:
         return [j for j in self.jogos(maratona_id) if j.user_id == user_id]
+
+    def jogadores(self, maratona_id: int) -> list[int]:
+        """Todo mundo que está jogando: quem colocou jogo + quem entrou sem jogo."""
+        rows = self.conn.execute(
+            "SELECT user_id FROM (SELECT user_id, MIN(id) AS o FROM jogos WHERE maratona_id = ? GROUP BY user_id"
+            " UNION ALL SELECT user_id, 1e18 AS o FROM maratona_extras WHERE maratona_id = ?)"
+            " GROUP BY user_id ORDER BY MIN(o)",
+            (maratona_id, maratona_id),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def extras(self, maratona_id: int) -> list[int]:
+        """Quem entrou sem colocar jogo (e continua sem jogo)."""
+        rows = self.conn.execute(
+            "SELECT e.user_id FROM maratona_extras e WHERE e.maratona_id = ? AND NOT EXISTS"
+            " (SELECT 1 FROM jogos j WHERE j.maratona_id = e.maratona_id AND j.user_id = e.user_id)",
+            (maratona_id,),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def entrar_sem_jogo(self, maratona_id: int, user_id: int) -> bool:
+        """True se entrou agora; False se já estava jogando."""
+        self._exigir_aberta(maratona_id)
+        if user_id in self.jogadores(maratona_id):
+            return False
+        with self.conn:
+            self.conn.execute("INSERT OR IGNORE INTO maratona_extras (maratona_id, user_id) VALUES (?, ?)",
+                              (maratona_id, user_id))
+        return True
+
+    def sair_sem_jogo(self, maratona_id: int, user_id: int) -> None:
+        self._exigir_aberta(maratona_id)
+        if self.jogos_do_usuario(maratona_id, user_id):
+            raise ErroMaratona("Essa pessoa colocou jogos nesta maratona, então continua contando como jogador.")
+        with self.conn:
+            cur = self.conn.execute("DELETE FROM maratona_extras WHERE maratona_id = ? AND user_id = ?",
+                                    (maratona_id, user_id))
+        if cur.rowcount == 0:
+            raise ErroMaratona("Essa pessoa não estava na lista de quem entrou sem jogo.")
 
     def participantes(self, maratona_id: int) -> list[Participante]:
         """Quem colocou pelo menos um jogo, na ordem em que entrou."""
@@ -865,3 +944,72 @@ class Database:
             (user_id,),
         ).fetchall()
         return {r["chave"]: r for r in rows}
+
+    # ---- contas e bibliotecas da Steam -----------------------------
+
+    def vincular_steam(self, user_id: int, steamid: str, nome: str | None, vinculado_por: int) -> None:
+        with self.conn:
+            antigo = self.conn.execute("SELECT steamid FROM steam_contas WHERE user_id = ?", (user_id,)).fetchone()
+            if antigo and antigo[0] != steamid:  # trocou de conta: a biblioteca antiga não vale mais
+                self.conn.execute("DELETE FROM steam_biblioteca WHERE user_id = ?", (user_id,))
+            self.conn.execute(
+                "INSERT INTO steam_contas (user_id, steamid, nome, vinculado_por) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (user_id) DO UPDATE SET steamid = excluded.steamid, nome = excluded.nome,"
+                " vinculado_por = excluded.vinculado_por, atualizado_em = NULL, publico = 0, total_jogos = 0",
+                (user_id, steamid, nome, vinculado_por),
+            )
+
+    def desvincular_steam(self, user_id: int) -> bool:
+        with self.conn:
+            self.conn.execute("DELETE FROM steam_biblioteca WHERE user_id = ?", (user_id,))
+            cur = self.conn.execute("DELETE FROM steam_contas WHERE user_id = ?", (user_id,))
+        return cur.rowcount == 1
+
+    def conta_steam(self, user_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM steam_contas WHERE user_id = ?", (user_id,)).fetchone()
+
+    def contas_steam(self, user_ids: list[int]) -> dict[int, sqlite3.Row]:
+        marcas = ", ".join("?" for _ in user_ids) or "NULL"
+        rows = self.conn.execute(f"SELECT * FROM steam_contas WHERE user_id IN ({marcas})", tuple(user_ids))
+        return {r["user_id"]: r for r in rows}
+
+    def salvar_biblioteca(self, user_id: int, publico: bool, appids: list[int]) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM steam_biblioteca WHERE user_id = ?", (user_id,))
+            self.conn.executemany("INSERT OR IGNORE INTO steam_biblioteca (user_id, appid) VALUES (?, ?)",
+                                  [(user_id, a) for a in appids])
+            self.conn.execute(
+                "UPDATE steam_contas SET publico = ?, total_jogos = ?, atualizado_em = ? WHERE user_id = ?",
+                (int(publico), len(appids), agora(), user_id),
+            )
+
+    def bibliotecas(self, user_ids: list[int]) -> dict[int, set[int]]:
+        """{user_id: {appids}} só de quem tem conta vinculada com jogos visíveis."""
+        saida: dict[int, set[int]] = {}
+        for uid, conta in self.contas_steam(user_ids).items():
+            if conta["publico"]:
+                saida[uid] = {r[0] for r in self.conn.execute(
+                    "SELECT appid FROM steam_biblioteca WHERE user_id = ?", (uid,))}
+        return saida
+
+    def salvar_app(self, app) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO steam_apps (appid, nome, gratis, preco_centavos, preco_texto, desconto,"
+                " multiplayer, coop, verificado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (app.appid, app.nome, int(app.gratis), app.preco_centavos, app.preco_texto, app.desconto,
+                 int(app.multiplayer), int(app.coop), app.verificado_em),
+            )
+
+    def apps(self, appids: list[int]) -> dict[int, sqlite3.Row]:
+        marcas = ", ".join("?" for _ in appids) or "NULL"
+        rows = self.conn.execute(f"SELECT * FROM steam_apps WHERE appid IN ({marcas})", tuple(appids))
+        return {r["appid"]: r for r in rows}
+
+    def appids_das_listas_de(self, user_ids: list[int]) -> set[int]:
+        """Jogos (já identificados na Steam) que estão nas listas pessoais dessas pessoas."""
+        marcas = ", ".join("?" for _ in user_ids) or "NULL"
+        rows = self.conn.execute(
+            f"SELECT DISTINCT s.appid FROM lista_pessoal l JOIN steam_nomes s ON s.chave = l.chave"
+            f" WHERE s.appid IS NOT NULL AND l.user_id IN ({marcas})", tuple(user_ids))
+        return {r[0] for r in rows}

@@ -144,6 +144,13 @@ class PainelView(discord.ui.View):
         if m := await self._maratona(interaction):
             await self.cog.sortear(interaction, m)
 
+    @discord.ui.button(label="Tô jogando", emoji="🙋", style=discord.ButtonStyle.secondary,
+                       custom_id="maratonando:jogando")
+    async def jogando(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        """Para quem chegou no meio e vai jogar, mesmo sem colocar jogo na roleta."""
+        if m := await self._maratona(interaction):
+            await self.cog.alternar_jogando(interaction, m)
+
     @discord.ui.button(label="Encerrar", emoji="🏁", style=discord.ButtonStyle.danger,
                        custom_id="maratonando:encerrar")
     async def encerrar(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
@@ -424,6 +431,7 @@ class MaratonaCog(commands.Cog):
 
     def embed_painel(self, m: Maratona) -> discord.Embed:
         participantes = self.db.participantes(m.id)
+        sem_jogo = self.db.extras(m.id)
         restantes, jogados = self.db.contagem(m.id)
         atual = self.db.ultimo_sorteado(m.id)
 
@@ -442,7 +450,8 @@ class MaratonaCog(commands.Cog):
         e = discord.Embed(title=f"🎮 {m.nome}", description=descricao,
                           color=COR_PAINEL if m.aberta else discord.Color.dark_grey())
         linhas = [f"<@{p.user_id}> — {plural(p.total, 'jogo', 'jogos')}" for p in participantes]
-        e.add_field(name=f"👥 Participantes ({len(participantes)})",
+        linhas += [f"<@{uid}> — entrou sem jogo" for uid in sem_jogo]
+        e.add_field(name=f"👥 Jogando ({len(linhas)})",
                     value=juntar(linhas, vazio="Ninguém ainda. Clique em **Adicionar jogos**!"), inline=False)
         e.add_field(name="🎰 Roleta",
                     value=f"{plural(restantes, 'jogo restante', 'jogos restantes')}\n"
@@ -481,6 +490,19 @@ class MaratonaCog(commands.Cog):
             await interaction.response.send_modal(AdicionarJogosModal(self, m))
             return
         await interaction.response.send_message(view.texto_inicial(), view=view, ephemeral=True)
+
+    async def alternar_jogando(self, interaction: discord.Interaction, m: Maratona) -> None:
+        uid = interaction.user.id
+        if uid in self.db.extras(m.id):
+            self.db.sair_sem_jogo(m.id, uid)
+            texto = "👋 Você saiu da lista de quem está jogando."
+        elif self.db.entrar_sem_jogo(m.id, uid):
+            texto = ("🙋 Você entrou na maratona! Já conta nos times e no `/maratona baratos`. "
+                     "Se quiser colocar jogo na roleta, é só clicar em **Adicionar jogos**.")
+        else:
+            texto = "Você já está jogando (colocou jogos na roleta). 👍"
+        await interaction.response.send_message(texto, ephemeral=True)
+        await self.atualizar_painel(m.id)
 
     async def mostrar_meus_jogos(self, interaction: discord.Interaction, m: Maratona) -> None:
         view = MeusJogosView(self, m, interaction.user.id)
@@ -523,6 +545,38 @@ class MaratonaCog(commands.Cog):
     async def cmd_encerrar(self, interaction: discord.Interaction) -> None:
         await self.pedir_encerramento(interaction, self.exigir_aberta(interaction))
 
+    @maratona.command(name="incluir", description="Coloca alguém na maratona mesmo sem jogo (chegou no meio).")
+    @app_commands.describe(pessoa="Quem chegou")
+    async def cmd_incluir(self, interaction: discord.Interaction, pessoa: discord.Member) -> None:
+        m = self.exigir_aberta(interaction)
+        if not self.pode_organizar(interaction, m):
+            raise ErroMaratona(f"Só quem organizou (<@{m.host_id}>) pode incluir outras pessoas. "
+                               "Cada um pode entrar sozinho pelo botão **🙋 Tô jogando**.")
+        if pessoa.bot:
+            raise ErroMaratona("Bots não jogam maratona. 🤖")
+        if not self.db.entrar_sem_jogo(m.id, pessoa.id):
+            raise ErroMaratona(f"{pessoa.mention} já está jogando.")
+        await interaction.response.send_message(f"🙋 {pessoa.mention} entrou na maratona!", allowed_mentions=SEM_PING)
+        await self.atualizar_painel(m.id)
+
+    @maratona.command(name="excluir", description="Tira da maratona alguém que entrou sem jogo.")
+    @app_commands.describe(pessoa="Quem saiu")
+    async def cmd_excluir(self, interaction: discord.Interaction, pessoa: discord.Member) -> None:
+        m = self.exigir_aberta(interaction)
+        if not self.pode_organizar(interaction, m) and pessoa.id != interaction.user.id:
+            raise ErroMaratona(f"Só quem organizou (<@{m.host_id}>) pode tirar outras pessoas.")
+        self.db.sair_sem_jogo(m.id, pessoa.id)
+        await interaction.response.send_message(f"👋 {pessoa.mention} saiu da maratona.", allowed_mentions=SEM_PING)
+        await self.atualizar_painel(m.id)
+
+    @maratona.command(name="baratos", description="Jogos multiplayer ordenados pelo custo para o grupo da maratona.")
+    async def cmd_baratos(self, interaction: discord.Interaction) -> None:
+        m = self.exigir_aberta(interaction)
+        steam = self.bot.get_cog("SteamCog")
+        if steam is None:
+            raise ErroMaratona("A parte da Steam do bot não está ligada.")
+        await steam.mostrar_baratos(interaction, m)
+
     @maratona.command(name="ajuda", description="Explica como a maratona funciona.")
     async def cmd_ajuda(self, interaction: discord.Interaction) -> None:
         e = discord.Embed(title="🎮 Como funciona a maratona", color=COR_PAINEL, description=(
@@ -535,6 +589,8 @@ class MaratonaCog(commands.Cog):
             "**4.** Reclamou do jogo? Use `/reclamou` (ou clique com o botão direito na pessoa → "
             "Apps → **Reclamou!**). Vai pro **Mural da Vergonha**. 😤\n"
             "**5.** No fim, **🏁 Encerrar** mostra o resumo da noite.\n\n"
+            "Chegou no meio? Clique em **🙋 Tô jogando** no painel.\n"
+            "Não querem gastar? `/maratona baratos` mostra o que sai mais barato para o grupo.\n"
             "Jogo em equipe? `/times` sorteia os times.\n"
             "Sem ideia de jogo? `/sugestao` e `/radar ver` dão sugestões.\n\n"
             "Perdeu o painel no meio do chat? `/maratona painel` traz ele de volta.\n"

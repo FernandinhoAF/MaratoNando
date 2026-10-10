@@ -645,6 +645,23 @@ class Database:
         na_maratona = self.jogos(maratona_id)
         return [i for i in self.lista(user_id) if not any(mesmo_jogo(i.nome, j.nome) for j in na_maratona)]
 
+    def renomear_na_lista(self, user_id: int, nome_antigo: str, nome_novo: str) -> None:
+        """Troca o nome de um jogo da lista (ex.: pelo nome oficial da Steam).
+
+        Se o nome novo já estiver na lista, só apaga o antigo (era o mesmo jogo duas vezes).
+        """
+        antigo, novo = _chave(nome_antigo), _chave(nome_novo)
+        if antigo == novo and nome_antigo == nome_novo:
+            return
+        with self.conn:
+            ja_tem = antigo != novo and self.conn.execute(
+                "SELECT 1 FROM lista_pessoal WHERE user_id = ? AND chave = ?", (user_id, novo)).fetchone()
+            if ja_tem:
+                self.conn.execute("DELETE FROM lista_pessoal WHERE user_id = ? AND chave = ?", (user_id, antigo))
+            else:
+                self.conn.execute("UPDATE lista_pessoal SET nome = ?, chave = ? WHERE user_id = ? AND chave = ?",
+                                  (nome_novo, novo, user_id, antigo))
+
     def remover_da_lista(self, user_id: int, item_id: int) -> ItemLista:
         row = self.conn.execute(
             "SELECT * FROM lista_pessoal WHERE id = ? AND user_id = ?", (item_id, user_id)

@@ -377,6 +377,18 @@ class MinhaListaView(discord.ui.View):
             )
             menu.callback = self.remover
             self.add_item(menu)
+        if self.nao_ligados():
+            botao = discord.ui.Button(label="Conferir nomes na Steam", emoji="🔎", style=discord.ButtonStyle.primary)
+            botao.callback = self.conferir
+            self.add_item(botao)
+
+    def nao_ligados(self) -> list[str]:
+        """Jogos da lista que o bot ainda não sabe qual jogo da Steam são."""
+        steam = self.cog.db.status_steam_da_lista(self.user_id)
+        return [i.nome for i in self.cog.db.lista(self.user_id) if not steam.get(i.chave)]
+
+    async def conferir(self, interaction: discord.Interaction) -> None:
+        await self.cog.conferir_lista(interaction, self.nao_ligados())
 
     def embed(self) -> discord.Embed:
         itens = self.cog.db.lista(self.user_id)
@@ -676,6 +688,32 @@ class MaratonaCog(commands.Cog):
                 await self.atualizar_painel(maratona_id)
                 self.em_segundo_plano(self.completar_com_custo(interaction, maratona_id, texto, adicionados))
         return concluir
+
+    async def conferir_lista(self, interaction: discord.Interaction, nomes: list[str]) -> None:
+        """Botão "Conferir nomes na Steam" do /lista ver: liga os jogos da lista à Steam, corrigindo os nomes."""
+        if not nomes:
+            await responder_privado(interaction, "Todos os jogos da sua lista já estão ligados à Steam. 👍")
+            return
+        originais = list(nomes)
+
+        async def concluir(inter: discord.Interaction, itens, via_botao: bool) -> None:
+            mudancas, ligados = [], 0
+            for antigo, (novo, appid) in zip(originais, itens):
+                if appid:
+                    self.db.renomear_na_lista(inter.user.id, antigo, novo)
+                    self.db.salvar_steam_nome(novo, appid)
+                    ligados += 1
+                    if novo != antigo:
+                        mudancas.append(f"• {antigo} → **{novo}**")
+            texto = f"🔎 Liguei **{plural(ligados, 'jogo', 'jogos')}** da sua lista à Steam."
+            if mudancas:
+                texto += "\n" + "\n".join(mudancas)
+            sobrou = len(originais) - ligados
+            if sobrou:
+                texto += f"\n-# {plural(sobrou, 'jogo ficou', 'jogos ficaram')} como estava (não achei na Steam ou você quis manter)."
+            await self._responder(inter, texto, via_botao)
+
+        await self.receber_nomes(interaction, nomes, concluir)
 
     async def concluir_lista(self, interaction: discord.Interaction, itens, via_botao: bool) -> None:
         salvos, recusados = self.db.salvar_na_lista(interaction.user.id, [n for n, _ in itens if n])

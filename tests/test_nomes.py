@@ -18,6 +18,12 @@ def test_erros_de_digitacao_acham_o_jogo_certo():
     assert ranquear_parecidos("repo", RESULTADOS_STEAM)[0] == (3241660, "R.E.P.O.")
 
 
+def test_comeco_do_nome_com_erro():
+    catalogo = [(2, "Dale & Dawson Stationery Supplies"), (3, "Dawnsong"), (4, "Dale Earnhardt Jr")]
+    assert ranquear_parecidos("dale & dawnson", catalogo)[0] == (2, "Dale & Dawson Stationery Supplies")
+    assert ranquear_parecidos("dale dawson", catalogo)[0] == (2, "Dale & Dawson Stationery Supplies")
+
+
 def test_nome_incompleto():
     assert ranquear_parecidos("lethal", RESULTADOS_STEAM)[0] == (1966720, "Lethal Company")
     assert semelhanca("let", "Lethal Company") < 0.55  # curto demais para adivinhar

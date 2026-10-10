@@ -30,6 +30,10 @@ def semelhanca(digitado: str, candidato: str) -> float:
     nota = SequenceMatcher(None, a, b).ratio()
     if len(a) >= 4 and b.startswith(a):
         nota = max(nota, 0.8)
+    if len(a) >= 5 and len(b) > len(a):
+        # Começo do nome com erro de digitação ("dale dawnson" → "Dale & Dawson Stationery Supplies"):
+        # compara com o pedaço do mesmo tamanho do começo do nome do jogo.
+        nota = max(nota, 0.9 * SequenceMatcher(None, a, b[:len(a)]).ratio())
     return nota
 
 

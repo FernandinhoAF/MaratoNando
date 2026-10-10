@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from biblioteca import resumo_grupo
+from nomes import ler_escolha, valor_escolha
 from db import Database, ErroMaratona, ItemLista, Jogo, Maratona, limpar_nome, separar_nomes
 
 log = logging.getLogger("maratonando")
@@ -81,6 +82,35 @@ def texto_resultado(adicionados: list[str], recusados: list[tuple[str, str]], ti
     if not partes:
         partes.append("Não encontrei nenhum nome de jogo aí. 🤔")
     return "\n\n".join(partes)
+
+
+async def autocompletar_jogo(bot: commands.Bot, interaction: discord.Interaction,
+                            atual: str) -> list[app_commands.Choice[str]]:
+    """Sugestões enquanto a pessoa digita o nome de um jogo.
+
+    📝 jogos da lista pessoal dela · 🎮 jogos da Steam · ✍️ usar exatamente o que digitou
+    (para jogos de fora da Steam). Escolhendo um 🎮, o bot já sabe qual jogo da Steam é.
+    """
+    atual = atual.strip()
+    opcoes: list[app_commands.Choice[str]] = []
+    db: Database = bot.db  # type: ignore[attr-defined]
+    if atual:
+        for item in db.lista(interaction.user.id):
+            if atual.casefold() in item.nome.casefold():
+                opcoes.append(app_commands.Choice(name=f"📝 {item.nome}"[:100], value=item.nome[:100]))
+    steam = bot.get_cog("SteamCog")
+    if steam is not None and len(atual) >= 2:
+        try:
+            for appid, nome in await steam.sugestoes(atual):
+                opcoes.append(app_commands.Choice(name=f"🎮 {nome}"[:100], value=valor_escolha(appid, nome)))
+        except Exception:
+            pass  # Steam lenta ou fora do ar: mostra só o resto
+    if atual:
+        opcoes.append(app_commands.Choice(name=f"✍️ Usar como escrevi: {atual}"[:100],
+                                          value=valor_escolha(0, atual)))
+    vistos: set[str] = set()
+    unicas = [o for o in opcoes if not (o.value in vistos or vistos.add(o.value))]
+    return unicas[:25]
 
 
 def mencao_do_cargo(db: Database, guild_id: int) -> tuple[str, discord.AllowedMentions, str]:
@@ -194,14 +224,58 @@ class AdicionarJogosModal(discord.ui.Modal, title="Colocar jogos na roleta"):
         await tratar_erro(interaction, erro)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        nomes = separar_nomes(self.jogos.value)
-        adicionados, recusados = self.cog.db.adicionar_jogos(self.maratona.id, interaction.user.id, nomes)
-        texto = texto_resultado(adicionados, recusados, "Na roleta")
-        texto += "\n\n-# Só você vê esta mensagem. Ninguém sabe quais jogos você colocou. 🤫"
-        await interaction.response.send_message(texto, ephemeral=True)
-        if adicionados:
-            await self.cog.atualizar_painel(self.maratona.id)
-            self.cog.em_segundo_plano(self.cog.completar_com_custo(interaction, self.maratona.id, texto, adicionados))
+        await self.cog.receber_nomes(interaction, separar_nomes(self.jogos.value),
+                                     self.cog.concluidor_roleta(self.maratona.id))
+
+
+class DuvidasView(discord.ui.View):
+    """ "Você quis dizer…?": um menu para cada nome que não bateu com nenhum jogo da Steam."""
+
+    def __init__(self, user_id: int, itens: list[tuple[str, Optional[int]]],
+                 duvidas: list[tuple[str, list[tuple[int, str]]]], concluir) -> None:
+        super().__init__(timeout=600)
+        self.user_id = user_id
+        self.itens = itens          # o que já está resolvido (na ordem em que foi digitado)
+        self.duvidas = duvidas[:4]  # cabem 4 menus + a linha do botão
+        self.sobras = duvidas[4:]   # se tiver mais que 4 dúvidas, essas entram como foram escritas
+        self.concluir = concluir
+        self.menus: list[discord.ui.Select] = []
+        for linha, (digitado, sugestoes) in enumerate(self.duvidas):
+            opcoes = [discord.SelectOption(label=nome[:100], value=valor_escolha(appid, nome), emoji="🎮",
+                                           default=(i == 0)) for i, (appid, nome) in enumerate(sugestoes)]
+            opcoes.append(discord.SelectOption(label=f"Manter como escrevi: {digitado}"[:100],
+                                               value=valor_escolha(0, digitado), emoji="✍️"))
+            menu = discord.ui.Select(placeholder=f"“{digitado}”: você quis dizer…?"[:150], options=opcoes, row=linha)
+            menu.callback = self._marcou
+            self.menus.append(menu)
+            self.add_item(menu)
+        botao = discord.ui.Button(label="Confirmar", emoji="✅", style=discord.ButtonStyle.success, row=4)
+        botao.callback = self._confirmar
+        self.add_item(botao)
+
+    async def on_error(self, interaction, erro, item) -> None:
+        await tratar_erro(interaction, erro)
+
+    async def _marcou(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()  # só guarda a escolha; vale quando clicar em Confirmar
+
+    def texto(self) -> str:
+        linhas = [f"• “{d}”" for d, _ in self.duvidas]
+        texto = ("🔎 Não achei estes jogos do jeito que foram escritos. Confere se é algum destes "
+                 "(ou escolha **Manter como escrevi**) e clique em **Confirmar**:\n" + "\n".join(linhas))
+        if self.sobras:
+            texto += f"\n-# Mais {len(self.sobras)} nome(s) vão entrar do jeito que foram escritos."
+        return texto
+
+    async def _confirmar(self, interaction: discord.Interaction) -> None:
+        escolhidos: dict[str, tuple[str, Optional[int]]] = {}
+        for (digitado, _), menu in zip(self.duvidas, self.menus):
+            valor = menu.values[0] if menu.values else next(o.value for o in menu.options if o.default)
+            nome, appid = ler_escolha(valor)
+            escolhidos[digitado] = (nome, appid or None)
+        itens = [escolhidos.get(nome, (nome, appid)) for nome, appid in self.itens]
+        self.stop()
+        await self.concluir(interaction, itens, True)
 
 
 class EscolherDaListaView(discord.ui.View):
@@ -278,7 +352,7 @@ class SalvarNaListaModal(discord.ui.Modal, title="Salvar jogos na sua lista"):
         await tratar_erro(interaction, erro)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        await self.cog.salvar_e_responder(interaction, separar_nomes(self.jogos.value))
+        await self.cog.receber_nomes(interaction, separar_nomes(self.jogos.value), self.cog.concluir_lista)
 
 
 class MinhaListaView(discord.ui.View):
@@ -518,9 +592,101 @@ class MaratonaCog(commands.Cog):
         self.tarefas.add(tarefa)
         tarefa.add_done_callback(self.tarefas.discard)
 
-    async def quem_tem(self, maratona_id: int, nome: str):
+    async def quem_tem(self, maratona_id: int, nome: str, appid: Optional[int] = None):
         steam = self.bot.get_cog("SteamCog")
-        return await steam.quem_tem(maratona_id, nome) if steam else None
+        return await steam.quem_tem(maratona_id, nome, appid) if steam else None
+
+    # ---- nomes digitados de qualquer jeito -------------------------
+
+    async def resolver_nomes(self, nomes: list[str]):
+        """Para cada nome: o jogo da Steam certinho, uma lista de parecidos (dúvida) ou nada.
+
+        Devolve ({nome: (appid, nome oficial) ou None}, [(nome, [parecidos])]).
+        Se a Steam estiver fora do ar, tudo entra do jeito que foi escrito.
+        """
+        steam = self.bot.get_cog("SteamCog")
+        achados: dict[str, Optional[tuple[int, str]]] = {}
+        duvidas: list[tuple[str, list[tuple[int, str]]]] = []
+        for nome in nomes:
+            parecidos: list[tuple[int, str]] = []
+            try:
+                achados[nome] = await steam.reconhecer(nome) if steam else None
+                if achados[nome] is None and steam:
+                    parecidos = await steam.parecidos(nome)
+            except Exception as exc:
+                log.warning("Não consegui conferir %r na Steam: %s", nome, exc)
+                achados[nome] = None
+            if parecidos:
+                duvidas.append((nome, parecidos))
+        return achados, duvidas
+
+    async def receber_nomes(self, interaction: discord.Interaction, nomes: list[str], concluir) -> None:
+        """Caminho único para jogos digitados (formulário, /maratona adicionar, /lista adicionar).
+
+        1. O que veio escolhido do autocompletar já está certo.
+        2. O resto é conferido na Steam: nome exato vira o nome oficial; nome parecido
+           vira a pergunta "você quis dizer…?"; nada parecido entra como foi escrito.
+        3. concluir(interaction, [(nome, appid)], via_botao) coloca na roleta/lista e responde.
+        """
+        escolhidos = [(limpar_nome(nome), appid) for nome, appid in (ler_escolha(n) for n in nomes if n.strip())]
+        escolhidos = [(nome, appid) for nome, appid in escolhidos if nome]
+        pendentes = [nome for nome, appid in escolhidos if appid is None]
+        steam = self.bot.get_cog("SteamCog")
+        achados, duvidas = {}, []
+        if pendentes and steam is not None:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True, thinking=True)
+            achados, duvidas = await self.resolver_nomes(pendentes)
+
+        itens: list[tuple[str, Optional[int]]] = []
+        for nome, appid in escolhidos:
+            if appid:  # escolhido no autocompletar (🎮)
+                if steam is not None:
+                    steam.lembrar_nome(nome, appid, nome)
+                itens.append((nome, appid))
+            elif appid == 0 or not achados.get(nome):  # ✍️ "usar como escrevi", ou não achado
+                itens.append((nome, None))
+            else:  # nome exato na Steam: troca pelo nome oficial
+                itens.append((achados[nome][1], achados[nome][0]))
+
+        if duvidas:
+            view = DuvidasView(interaction.user.id, itens, duvidas, concluir)
+            await interaction.followup.send(view.texto(), view=view, ephemeral=True)
+        else:
+            await concluir(interaction, itens, False)
+
+    @staticmethod
+    async def _responder(interaction: discord.Interaction, texto: str, via_botao: bool) -> None:
+        if via_botao:
+            await interaction.response.edit_message(content=texto, view=None)
+        elif interaction.response.is_done():
+            await interaction.followup.send(texto, ephemeral=True)
+        else:
+            await interaction.response.send_message(texto, ephemeral=True)
+
+    def concluidor_roleta(self, maratona_id: int):
+        async def concluir(interaction: discord.Interaction, itens, via_botao: bool) -> None:
+            nomes = [n for n, _ in itens if n]
+            adicionados, recusados = self.db.adicionar_jogos(maratona_id, interaction.user.id, nomes,
+                                                             {n: a for n, a in itens})
+            texto = texto_resultado(adicionados, recusados, "Na roleta")
+            texto += "\n\n-# Só você vê esta mensagem. Ninguém sabe quais jogos você colocou. 🤫"
+            await self._responder(interaction, texto, via_botao)
+            if adicionados:
+                await self.atualizar_painel(maratona_id)
+                self.em_segundo_plano(self.completar_com_custo(interaction, maratona_id, texto, adicionados))
+        return concluir
+
+    async def concluir_lista(self, interaction: discord.Interaction, itens, via_botao: bool) -> None:
+        salvos, recusados = self.db.salvar_na_lista(interaction.user.id, [n for n, _ in itens if n])
+        for nome, appid in itens:
+            if appid and nome in salvos:
+                self.db.salvar_steam_nome(nome, appid)
+        texto = texto_resultado(salvos, recusados, "Salvo na sua lista")
+        if salvos:
+            texto += ("\n\n-# Na próxima maratona, quando você clicar em **Adicionar jogos**, "
+                      "sua lista vai aparecer. Só você vê. 🤫")
+        await self._responder(interaction, texto, via_botao)
 
     async def completar_com_custo(self, interaction: discord.Interaction, maratona_id: int, texto: str,
                                   nomes: list[str], view: Optional[discord.ui.View] = None) -> None:
@@ -608,6 +774,17 @@ class MaratonaCog(commands.Cog):
     async def cmd_encerrar(self, interaction: discord.Interaction) -> None:
         await self.pedir_encerramento(interaction, self.exigir_aberta(interaction))
 
+    @maratona.command(name="adicionar", description="Coloca um jogo na roleta (com sugestões da Steam enquanto digita).")
+    @app_commands.describe(jogo="Comece a digitar e escolha da lista")
+    async def cmd_adicionar(self, interaction: discord.Interaction,
+                            jogo: app_commands.Range[str, 1, 100]) -> None:
+        m = self.exigir_aberta(interaction)
+        await self.receber_nomes(interaction, [jogo], self.concluidor_roleta(m.id))
+
+    @cmd_adicionar.autocomplete("jogo")
+    async def _autocompletar_roleta(self, interaction: discord.Interaction, atual: str):
+        return await autocompletar_jogo(self.bot, interaction, atual)
+
     @maratona.command(name="incluir", description="Coloca alguém na maratona mesmo sem jogo (chegou no meio).")
     @app_commands.describe(pessoa="Quem chegou")
     async def cmd_incluir(self, interaction: discord.Interaction, pessoa: discord.Member) -> None:
@@ -644,7 +821,8 @@ class MaratonaCog(commands.Cog):
     async def cmd_ajuda(self, interaction: discord.Interaction) -> None:
         e = discord.Embed(title="🎮 Como funciona a maratona", color=COR_PAINEL, description=(
             "**1.** Alguém abre a maratona com `/maratona criar`.\n"
-            "**2.** Cada um clica em **➕ Adicionar jogos** e escreve seus jogos, um por linha. "
+            "**2.** Cada um clica em **➕ Adicionar jogos** e escreve seus jogos, um por linha "
+            "(ou usa `/maratona adicionar`, que sugere o nome certinho enquanto digita). "
             "Os jogos ficam secretos até serem sorteados.\n"
             "**3.** Quem organizou clica em **🎲 Sortear**. O jogo que cair é o que todo mundo joga.\n"
             "**Dica:** lembrou de um jogo no meio da semana? Use `/lista adicionar` para guardar. "
@@ -679,7 +857,7 @@ class MaratonaCog(commands.Cog):
         self.girando.add(m.id)
         try:
             # Enquanto a roleta gira, o bot descobre quem tem o jogo (aproveita os segundos da animação).
-            quem_tem = asyncio.create_task(self.quem_tem(m.id, sorteio.jogo.nome))
+            quem_tem = asyncio.create_task(self.quem_tem(m.id, sorteio.jogo.nome, sorteio.jogo.appid))
             await self.animar_roleta(interaction, m, sorteio.jogo, sorteio.numero, sorteio.restantes, quem_tem)
         finally:
             self.girando.discard(m.id)
@@ -769,23 +947,18 @@ class MaratonaCog(commands.Cog):
 
     # ---- /lista ----------------------------------------------------
 
-    async def salvar_e_responder(self, interaction: discord.Interaction, nomes: list[str]) -> None:
-        salvos, recusados = self.db.salvar_na_lista(interaction.user.id, nomes)
-        texto = texto_resultado(salvos, recusados, "Salvo na sua lista")
-        if salvos:
-            texto += ("\n\n-# Na próxima maratona, quando você clicar em **Adicionar jogos**, "
-                      "sua lista vai aparecer. Só você vê. 🤫")
-        await interaction.response.send_message(texto, ephemeral=True)
-
     @lista.command(name="adicionar", description="Guarda jogos na sua lista para a próxima maratona.")
-    @app_commands.describe(jogo="Nome do jogo (deixe vazio para escrever vários de uma vez)")
+    @app_commands.describe(jogo="Nome do jogo (aparecem sugestões enquanto digita; vazio = escrever vários)")
     async def cmd_lista_adicionar(self, interaction: discord.Interaction,
-                                  jogo: Optional[app_commands.Range[str, 1, 80]] = None) -> None:
+                                  jogo: Optional[app_commands.Range[str, 1, 100]] = None) -> None:
         if jogo is None:
             await interaction.response.send_modal(SalvarNaListaModal(self))
         else:
-            nome = limpar_nome(jogo)
-            await self.salvar_e_responder(interaction, [nome] if nome else [])
+            await self.receber_nomes(interaction, [jogo], self.concluir_lista)
+
+    @cmd_lista_adicionar.autocomplete("jogo")
+    async def _autocompletar_lista(self, interaction: discord.Interaction, atual: str):
+        return await autocompletar_jogo(self.bot, interaction, atual)
 
     @lista.command(name="ver", description="Mostra (só para você) os jogos da sua lista.")
     async def cmd_lista_ver(self, interaction: discord.Interaction) -> None:

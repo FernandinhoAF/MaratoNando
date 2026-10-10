@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from nomes import mesmo_jogo
 from radar import JANELA_DIAS, InfoJogo
 
 TAM_MAX_NOME = 80  # caracteres por nome de jogo
@@ -240,6 +241,13 @@ CREATE TABLE IF NOT EXISTS chamado_respostas (
     respondido_em TEXT   NOT NULL,
     PRIMARY KEY (chamado_id, user_id)
 );
+
+-- Catálogo de nomes de jogos que o bot já viu (bibliotecas, buscas na Steam, radar).
+-- Serve para reconhecer nomes digitados com erro, que a busca da Steam não acha.
+CREATE TABLE IF NOT EXISTS catalogo (
+    appid INTEGER PRIMARY KEY,
+    nome  TEXT NOT NULL
+);
 """
 
 # Colunas criadas depois da primeira versão: adicionadas sozinhas em bancos antigos.
@@ -247,6 +255,7 @@ MIGRACOES = [
     ("limpeza_config", "avisar_promocoes", "INTEGER NOT NULL DEFAULT 1"),
     ("limpeza_config", "cargo_jogos", "INTEGER"),        # cargo marcado para chamar o pessoal
     ("limpeza_config", "ultimo_ping_cargo", "TEXT"),     # quando o bot marcou esse cargo pela última vez
+    ("jogos", "appid", "INTEGER"),                       # jogo da Steam (quando o bot reconheceu)
 ]
 
 MINUTOS_ENTRE_PINGS = 30  # o cargo é marcado no máximo uma vez a cada 30 minutos
@@ -294,6 +303,7 @@ class Jogo:
     adicionado_em: str
     sorteado_em: str | None
     ordem: int | None
+    appid: int | None = None  # jogo da Steam, quando reconhecido
 
     @property
     def jogado(self) -> bool:
@@ -439,39 +449,48 @@ class Database:
 
     # ---- jogos -----------------------------------------------------
 
+    def appid_conhecido(self, nome: str) -> int | None:
+        """Qual jogo da Steam é esse nome, se o bot já descobriu antes."""
+        row = self.conn.execute("SELECT appid FROM steam_nomes WHERE chave = ?", (_chave(nome),)).fetchone()
+        return row[0] if row else None
+
     def adicionar_jogos(
-        self, maratona_id: int, user_id: int, nomes: list[str]
+        self, maratona_id: int, user_id: int, nomes: list[str], appids: dict[str, int | None] | None = None
     ) -> tuple[list[str], list[tuple[str, str]]]:
         """Coloca jogos na roleta.
 
+        appids: {nome: jogo da Steam} quando o bot já reconheceu o jogo.
+        Repetido = mesmo jogo da Steam, ou o mesmo nome escrito de outro jeito ("R.E.P.O." = "repo").
         Devolve (adicionados, recusados), onde cada recusado vem com o motivo.
         """
         m = self._exigir_aberta(maratona_id)
-        todos = self.jogos(maratona_id)
-        ja_existe = {_chave(j.nome): j.jogado for j in todos}
-        meus = sum(1 for j in todos if j.user_id == user_id)
+        appids = appids or {}
+        existentes = [(j.nome, j.appid, j.jogado) for j in self.jogos(maratona_id)]
+        meus = sum(1 for j in self.jogos(maratona_id) if j.user_id == user_id)
 
-        adicionados: list[str] = []
+        adicionados: list[tuple[str, int | None]] = []
         recusados: list[tuple[str, str]] = []
         for nome in nomes:
-            chave = _chave(nome)
-            if chave in ja_existe:
-                motivo = "já foi jogado nesta maratona" if ja_existe[chave] else "já está na roleta"
+            appid = appids.get(nome) or self.appid_conhecido(nome)
+            repetido = next((jogado for outro, outro_appid, jogado in existentes
+                             if (appid and appid == outro_appid) or mesmo_jogo(nome, outro)), None)
+            if repetido is not None:
+                motivo = "já foi jogado nesta maratona" if repetido else "já está na roleta"
                 recusados.append((nome, motivo))
             elif m.limite is not None and meus + len(adicionados) >= m.limite:
                 recusados.append((nome, f"passou do limite de {m.limite} por pessoa"))
             else:
-                adicionados.append(nome)
-                ja_existe[chave] = False
+                adicionados.append((nome, appid))
+                existentes.append((nome, appid, False))
 
         if adicionados:
             momento = agora()
             with self.conn:
                 self.conn.executemany(
-                    "INSERT INTO jogos (maratona_id, user_id, nome, adicionado_em) VALUES (?, ?, ?, ?)",
-                    [(maratona_id, user_id, nome, momento) for nome in adicionados],
+                    "INSERT INTO jogos (maratona_id, user_id, nome, adicionado_em, appid) VALUES (?, ?, ?, ?, ?)",
+                    [(maratona_id, user_id, nome, momento, appid) for nome, appid in adicionados],
                 )
-        return adicionados, recusados
+        return [nome for nome, _ in adicionados], recusados
 
     def remover_jogo(self, maratona_id: int, user_id: int, jogo_id: int) -> Jogo:
         """Tira da roleta um jogo da própria pessoa que ainda não foi sorteado."""
@@ -595,18 +614,17 @@ class Database:
 
     def salvar_na_lista(self, user_id: int, nomes: list[str]) -> tuple[list[str], list[tuple[str, str]]]:
         """Guarda jogos na lista pessoal. Devolve (salvos, recusados com motivo)."""
-        chaves = {i.chave for i in self.lista(user_id)}
+        atuais = [i.nome for i in self.lista(user_id)]
         salvos: list[str] = []
         recusados: list[tuple[str, str]] = []
         for nome in nomes:
-            chave = _chave(nome)
-            if chave in chaves:
+            if any(mesmo_jogo(nome, outro) for outro in atuais):
                 recusados.append((nome, "já está na sua lista"))
-            elif len(chaves) >= MAX_LISTA:
+            elif len(atuais) >= MAX_LISTA:
                 recusados.append((nome, f"sua lista chegou no máximo de {MAX_LISTA} jogos"))
             else:
                 salvos.append(nome)
-                chaves.add(chave)
+                atuais.append(nome)
         if salvos:
             momento = agora()
             with self.conn:
@@ -624,8 +642,8 @@ class Database:
 
     def lista_fora_da_maratona(self, user_id: int, maratona_id: int) -> list[ItemLista]:
         """Itens da lista que ainda não estão (nem estiveram) na maratona."""
-        na_maratona = {_chave(j.nome) for j in self.jogos(maratona_id)}
-        return [i for i in self.lista(user_id) if i.chave not in na_maratona]
+        na_maratona = self.jogos(maratona_id)
+        return [i for i in self.lista(user_id) if not any(mesmo_jogo(i.nome, j.nome) for j in na_maratona)]
 
     def remover_da_lista(self, user_id: int, item_id: int) -> ItemLista:
         row = self.conn.execute(
@@ -1120,3 +1138,13 @@ class Database:
     def encerrar_chamado(self, chamado_id: int) -> None:
         with self.conn:
             self.conn.execute("UPDATE chamados SET encerrado = 1 WHERE id = ?", (chamado_id,))
+
+    # ---- catálogo de nomes -----------------------------------------
+
+    def catalogo_adicionar(self, jogos: list[tuple[int, str]]) -> None:
+        if jogos:
+            with self.conn:
+                self.conn.executemany("INSERT OR REPLACE INTO catalogo (appid, nome) VALUES (?, ?)", jogos)
+
+    def catalogo(self) -> list[tuple[int, str]]:
+        return [(r[0], r[1]) for r in self.conn.execute("SELECT appid, nome FROM catalogo")]

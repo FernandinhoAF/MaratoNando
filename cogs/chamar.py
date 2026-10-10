@@ -19,7 +19,8 @@ from discord import app_commands
 from discord.ext import commands
 
 from biblioteca import reais, resumo_grupo
-from cogs.maratona import SEM_PING, mencao_do_cargo, tratar_erro
+from cogs.maratona import SEM_PING, autocompletar_jogo, mencao_do_cargo, tratar_erro
+from nomes import ler_escolha
 from db import Database, ErroMaratona, limpar_nome
 
 log = logging.getLogger("maratonando.chamar")
@@ -140,9 +141,15 @@ class ChamarCog(commands.Cog):
                            pessoas="Quantas pessoas fecham o grupo (opcional)")
     @app_commands.guild_only()
     async def cmd_chamar(self, interaction: discord.Interaction,
-                         jogo: Optional[app_commands.Range[str, 1, 80]] = None,
+                         jogo: Optional[app_commands.Range[str, 1, 100]] = None,
                          pessoas: Optional[app_commands.Range[int, 2, 20]] = None) -> None:
-        jogo = limpar_nome(jogo) if jogo else None
+        appid = None
+        if jogo:
+            jogo, appid = ler_escolha(jogo)
+            jogo = limpar_nome(jogo)
+            steam = self.bot.get_cog("SteamCog")
+            if appid and steam is not None:  # escolhido do autocompletar: o bot já sabe qual jogo é
+                steam.lembrar_nome(jogo, appid, jogo)
         chamado_id = self.db.criar_chamado(interaction.guild_id, interaction.channel_id, interaction.user.id,
                                            jogo or None, pessoas)
         mencao, permissao, aviso = mencao_do_cargo(self.db, interaction.guild_id)
@@ -155,6 +162,10 @@ class ChamarCog(commands.Cog):
         if aviso:
             await interaction.followup.send(f"Chamado feito{aviso}.", ephemeral=True)
         self.em_segundo_plano(self.calcular_steam(chamado_id))
+
+    @cmd_chamar.autocomplete("jogo")
+    async def _autocompletar(self, interaction: discord.Interaction, atual: str):
+        return await autocompletar_jogo(self.bot, interaction, atual)
 
     # ---- respostas --------------------------------------------------
 

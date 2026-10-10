@@ -11,6 +11,7 @@
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -21,7 +22,8 @@ from discord.ext import commands
 
 from biblioteca import (AppSteam, Opcao, app_da_linha, app_de_detalhes, calcular_opcoes,
                         escolher_candidatos, ler_perfil, reais)
-from radar import escolher_resultado
+from nomes import ranquear_parecidos, termos_de_busca
+from radar import normalizar
 from cogs.maratona import SEM_PING, juntar, plural, tratar_erro
 from db import Database, ErroMaratona, Maratona, agora
 from servicos.steam import PAUSA, ErroSteam, SteamClient
@@ -128,6 +130,7 @@ class SteamCog(commands.Cog):
         self.loja: Optional[SteamClient] = None
         self.analisando = asyncio.Lock()
         self.tarefas: set[asyncio.Task] = set()
+        self.cache_busca: dict[str, tuple[float, list[tuple[int, str]]]] = {}
 
     async def cog_load(self) -> None:
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20))
@@ -171,6 +174,7 @@ class SteamCog(commands.Cog):
             self.db.salvar_biblioteca(user_id, False, [])
             return None
         self.db.salvar_biblioteca(user_id, True, [int(j["appid"]) for j in jogos])
+        self.db.catalogo_adicionar([(int(j["appid"]), j["name"]) for j in jogos if j.get("name")])
         return len(jogos)
 
     async def atualizar_bibliotecas(self, user_ids: list[int]) -> None:
@@ -196,15 +200,70 @@ class SteamCog(commands.Cog):
 
     # ---- "quem tem esse jogo?" (sorteio e roleta) --------------------
 
+    async def buscar_loja(self, termo: str, tempo_max: float = 8.0) -> list[tuple[int, str]]:
+        """Busca na loja (com memória de 10 minutos, para o autocompletar não repetir buscas)."""
+        chave = termo.casefold().strip()
+        guardado = self.cache_busca.get(chave)
+        if guardado and time.monotonic() - guardado[0] < 600:
+            return guardado[1]
+        itens = await asyncio.wait_for(self.loja.buscar(termo), timeout=tempo_max)
+        resultado = [(int(i["id"]), i["name"]) for i in itens if i.get("type", "app") == "app" and i.get("name")]
+        self.cache_busca[chave] = (time.monotonic(), resultado)
+        self.db.catalogo_adicionar(resultado)
+        if len(self.cache_busca) > 500:  # não deixa a memória crescer para sempre
+            self.cache_busca.pop(next(iter(self.cache_busca)))
+        return resultado
+
+    async def reconhecer(self, nome: str) -> Optional[tuple[int, str]]:
+        """(jogo da Steam, nome oficial) quando o nome bate exatamente (ignorando maiúsculas e pontuação).
+
+        Guarda o resultado (inclusive o "não achei"), para não perguntar à Steam toda hora.
+        """
+        conhecido = self.db.conn.execute(
+            "SELECT appid, nome, verificado_em FROM steam_nomes WHERE chave = ?", (nome.casefold(),)).fetchone()
+        if conhecido is not None and conhecido["appid"]:
+            return conhecido["appid"], conhecido["nome"]
+        if conhecido is not None and not antes_de(conhecido["verificado_em"], days=14):
+            return None
+        alvo = normalizar(nome)
+        achado = next(((a, n) for a, n in await self.buscar_loja(nome) if normalizar(n) == alvo), None)
+        if achado:
+            self.lembrar_nome(nome, *achado)
+        else:
+            self.db.salvar_steam_nome(nome, None)
+        return achado
+
+    def lembrar_nome(self, digitado: str, appid: int, oficial: str) -> None:
+        """Guarda que esse nome (e o nome oficial) é tal jogo da Steam."""
+        self.db.salvar_steam_nome(oficial, appid)
+        if digitado.casefold() != oficial.casefold():
+            self.db.conn.execute("INSERT OR REPLACE INTO steam_nomes (chave, nome, appid, verificado_em)"
+                                 " VALUES (?, ?, ?, ?)", (digitado.casefold(), oficial, appid, agora()))
+            self.db.conn.commit()
+
+    async def parecidos(self, nome: str) -> list[tuple[int, str]]:
+        """Jogos da Steam com nome parecido (para o "você quis dizer…?").
+
+        Junta duas fontes: a busca da Steam (pelo nome todo e pelas palavras maiores)
+        e o catálogo de jogos que o bot já viu (bibliotecas do pessoal, buscas antigas).
+        O catálogo é o que salva erros de digitação que a busca da Steam não acha.
+        """
+        itens: list[tuple[int, str]] = []
+        for termo in termos_de_busca(nome):
+            try:
+                itens += await self.buscar_loja(termo)
+            except Exception:
+                pass
+        return ranquear_parecidos(nome, itens + self.db.catalogo())
+
+    async def sugestoes(self, texto: str) -> list[tuple[int, str]]:
+        """Para o autocompletar: rápido (a resposta tem que sair em menos de 3 segundos)."""
+        return (await self.buscar_loja(texto, tempo_max=2.0))[:10]
+
     async def appid_do_nome(self, nome: str) -> Optional[int]:
         """Descobre qual jogo da Steam é esse nome (e guarda, para não procurar de novo)."""
-        conhecido = self.db.conn.execute(
-            "SELECT appid, verificado_em FROM steam_nomes WHERE chave = ?", (nome.casefold(),)).fetchone()
-        if conhecido is not None and (conhecido["appid"] or not antes_de(conhecido["verificado_em"], days=14)):
-            return conhecido["appid"]
-        appid = escolher_resultado(nome, await self.loja.buscar(nome))
-        self.db.salvar_steam_nome(nome, appid)
-        return appid
+        achado = await self.reconhecer(nome)
+        return achado[0] if achado else None
 
     async def app_atual(self, appid: int, nome: str = "") -> AppSteam:
         guardado = self.db.apps([appid]).get(appid)
@@ -214,11 +273,13 @@ class SteamCog(commands.Cog):
         self.db.salvar_app(app)
         return app
 
-    async def quem_tem(self, maratona_id: int, nome: str) -> Optional[tuple[Opcao, list[int]]]:
+    async def quem_tem(self, maratona_id: int, nome: str,
+                       appid: Optional[int] = None) -> Optional[tuple[Opcao, list[int]]]:
         """Igual ao quem_tem_para, usando os jogadores da maratona."""
-        return await self.quem_tem_para(self.db.jogadores(maratona_id), nome)
+        return await self.quem_tem_para(self.db.jogadores(maratona_id), nome, appid)
 
-    async def quem_tem_para(self, jogadores: list[int], nome: str) -> Optional[tuple[Opcao, list[int]]]:
+    async def quem_tem_para(self, jogadores: list[int], nome: str,
+                            appid: Optional[int] = None) -> Optional[tuple[Opcao, list[int]]]:
         """(quem tem / quem falta / custo, quem não dá para saber) de um jogo, para essas pessoas.
 
         None quando não dá para calcular: sem chave da Steam, ninguém com Steam vinculada,
@@ -232,7 +293,7 @@ class SteamCog(commands.Cog):
             bibliotecas = self.db.bibliotecas(jogadores)
             if not bibliotecas:
                 return None
-            appid = await self.appid_do_nome(nome)
+            appid = appid or await self.appid_do_nome(nome)
             if appid is None:
                 return None
             app = await self.app_atual(appid, nome)

@@ -8,6 +8,7 @@ Quem chegou clica em "Vou jogar"; quem saiu clica em "Não vou". Quem organizou
 também pode marcar/desmarcar pessoas. Depois é só clicar em "Sortear times".
 """
 
+import re
 from typing import Optional
 
 import discord
@@ -143,20 +144,22 @@ class TimesCog(commands.Cog):
     async def cog_app_command_error(self, interaction, erro) -> None:
         await tratar_erro(interaction, erro)
 
-    def lista_inicial(self, interaction: discord.Interaction) -> tuple[list[int], str]:
+    def lista_inicial(self, interaction: discord.Interaction, usar_maratona: bool = True) -> tuple[list[int], str]:
         # 1º: quem está na maratona (colocou jogo ou clicou em "Tô jogando").
         #     Tem prioridade sobre a call, porque às vezes tem gente na call só conversando.
-        m = self.db.maratona_aberta(interaction.guild_id)
+        m = self.db.maratona_aberta(interaction.guild_id) if usar_maratona else None
         if m is not None:
             pessoas = self.db.jogadores(m.id)
             if pessoas:
                 return pessoas, "quem está jogando a maratona"
-        # 2º: sem maratona, usa quem está na call.
+        # 2º: sem maratona (ou no /sortear-times), usa quem está na call.
         voz = getattr(getattr(interaction.user, "voice", None), "channel", None)
         if voz is not None:
             pessoas = [p.id for p in voz.members if not p.bot]
             if pessoas:
                 return pessoas, f"quem está na call **🔊 {voz.name}**"
+        if not usar_maratona:
+            return [], "ninguém (você não está numa call)"
         return [], "ninguém (não achei maratona aberta nem call)"
 
     @app_commands.command(name="times", description="Sorteia times para jogos em equipe.")
@@ -166,6 +169,32 @@ class TimesCog(commands.Cog):
                         quantidade: app_commands.Range[int, 2, MAX_TIMES] = 2) -> None:
         jogadores, origem = self.lista_inicial(interaction)
         view = TimesView(interaction.user.id, quantidade, jogadores, origem)
+        await interaction.response.send_message(embed=view.embed(), view=view, allowed_mentions=SEM_PING)
+        view.mensagem = await interaction.original_response()
+
+    @app_commands.command(name="sortear-times",
+                          description="Sorteia times sem ligação com a maratona (marque as pessoas ou use a call).")
+    @app_commands.describe(
+        quantidade="Quantos times (padrão: 2)",
+        jogadores="Marque quem vai jogar (ex.: @Ana @Bia @Caio @Duda). Vazio = começa com quem está na sua call",
+    )
+    @app_commands.guild_only()
+    async def cmd_sortear_times(self, interaction: discord.Interaction,
+                                quantidade: app_commands.Range[int, 2, MAX_TIMES] = 2,
+                                jogadores: Optional[str] = None) -> None:
+        marcados = list(dict.fromkeys(int(i) for i in re.findall(r"<@!?(\d+)>", jogadores or "")))
+        if jogadores and not marcados:
+            raise ErroMaratona("Não achei ninguém marcado. Use @ para marcar as pessoas, tipo `@Ana @Bia @Caio`.")
+        if marcados:
+            # Já veio a lista pronta: sorteia direto (dá para refazer ou mudar a lista pelos botões).
+            if len(marcados) < quantidade:
+                raise ErroMaratona(f"Para {quantidade} times, marque pelo menos {quantidade} pessoas.")
+            view = TimesView(interaction.user.id, quantidade, marcados, "as pessoas marcadas")
+            view.resultado = dividir_em_times(view.jogadores, quantidade)
+            view.montar()
+        else:
+            lista, origem = self.lista_inicial(interaction, usar_maratona=False)
+            view = TimesView(interaction.user.id, quantidade, lista, origem)
         await interaction.response.send_message(embed=view.embed(), view=view, allowed_mentions=SEM_PING)
         view.mensagem = await interaction.original_response()
 

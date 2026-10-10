@@ -19,7 +19,7 @@ PASTA = Path(__file__).resolve().parent
 SAIDA = PASTA / "MaratoNando-discloud.zip"
 
 ARQUIVOS = [
-    "bot.py", "db.py", "radar.py", "sugestao.py", "times.py", "biblioteca.py",
+    "bot.py", "db.py", "radar.py", "sugestao.py", "times.py", "biblioteca.py", "nomes.py",
     "requirements.txt", "discloud.config", ".env",
 ]
 PASTAS = ["cogs", "servicos"]  # só os arquivos .py de dentro delas

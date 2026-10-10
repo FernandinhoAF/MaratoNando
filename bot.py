@@ -30,6 +30,7 @@ class MaratoNando(commands.Bot):
         await self.load_extension("cogs.maratona")
         await self.load_extension("cogs.radar")
         await self.load_extension("cogs.times")
+        await self.load_extension("cogs.limpeza")
 
         # Com DEV_GUILD_ID, os comandos aparecem na hora só naquele servidor (bom para testar).
         # Sem ele, são registrados para todos os servidores (pode levar alguns minutos).

@@ -133,7 +133,26 @@ CREATE TABLE IF NOT EXISTS radar_avisados (
     game_id  TEXT    NOT NULL,
     PRIMARY KEY (guild_id, game_id)
 );
+
+-- ===== Limpeza do chat =====
+
+-- Canal próprio do bot e quanto tempo esperar para apagar mensagens fora dele.
+CREATE TABLE IF NOT EXISTS limpeza_config (
+    guild_id  INTEGER PRIMARY KEY,
+    canal_bot INTEGER,  -- mensagens neste canal nunca são apagadas
+    minutos   INTEGER   -- NULL = padrão; 0 = nunca apagar
+);
+
+-- Mensagens do bot agendadas para sumir (fica no banco para sobreviver a reinícios).
+CREATE TABLE IF NOT EXISTS limpeza_agenda (
+    message_id INTEGER PRIMARY KEY,
+    channel_id INTEGER NOT NULL,
+    guild_id   INTEGER NOT NULL,
+    apagar_em  TEXT    NOT NULL
+);
 """
+
+MINUTOS_LIMPEZA_PADRAO = 10
 
 RECHECAR_STEAM_DIAS = 3       # preço/promoção mudam: confere de novo a cada 3 dias
 RECHECAR_SEM_STEAM_DIAS = 14  # jogo que não achei na Steam: tenta de novo em 2 semanas
@@ -623,3 +642,67 @@ class Database:
                 "INSERT OR IGNORE INTO radar_avisados (guild_id, game_id) VALUES (?, ?)", (guild_id, game_id)
             )
         return cur.rowcount == 1
+
+    # ---- limpeza do chat -------------------------------------------
+
+    def limpeza_config(self, guild_id: int) -> tuple[int | None, int]:
+        """(canal do bot, minutos até apagar). Sem canal do bot configurado, nada é apagado."""
+        row = self.conn.execute(
+            "SELECT canal_bot, minutos FROM limpeza_config WHERE guild_id = ?", (guild_id,)
+        ).fetchone()
+        if row is None:
+            return None, MINUTOS_LIMPEZA_PADRAO
+        minutos = MINUTOS_LIMPEZA_PADRAO if row["minutos"] is None else row["minutos"]
+        return row["canal_bot"], minutos
+
+    def definir_canal_bot(self, guild_id: int, canal_id: int | None) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO limpeza_config (guild_id, canal_bot) VALUES (?, ?)"
+                " ON CONFLICT (guild_id) DO UPDATE SET canal_bot = excluded.canal_bot",
+                (guild_id, canal_id),
+            )
+            if canal_id is None:  # sem canal do bot, a limpeza desliga: esquece o que estava agendado
+                self.conn.execute("DELETE FROM limpeza_agenda WHERE guild_id = ?", (guild_id,))
+            else:  # o que já estava no novo canal do bot não precisa mais sumir
+                self.conn.execute("DELETE FROM limpeza_agenda WHERE channel_id = ?", (canal_id,))
+
+    def definir_minutos_limpeza(self, guild_id: int, minutos: int) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO limpeza_config (guild_id, minutos) VALUES (?, ?)"
+                " ON CONFLICT (guild_id) DO UPDATE SET minutos = excluded.minutos",
+                (guild_id, minutos),
+            )
+            if minutos == 0:
+                self.conn.execute("DELETE FROM limpeza_agenda WHERE guild_id = ?", (guild_id,))
+
+    def agendar_apagar(self, message_id: int, channel_id: int, guild_id: int, apagar_em: datetime) -> None:
+        """Agenda (ou reagenda) uma mensagem para ser apagada."""
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO limpeza_agenda (message_id, channel_id, guild_id, apagar_em) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (message_id) DO UPDATE SET apagar_em = excluded.apagar_em",
+                (message_id, channel_id, guild_id, apagar_em.isoformat(timespec="seconds")),
+            )
+
+    def adiar_apagar(self, message_id: int, apagar_em: datetime) -> bool:
+        """Empurra o prazo de uma mensagem já agendada (alguém mexeu nela). False se não estava agendada."""
+        with self.conn:
+            cur = self.conn.execute(
+                "UPDATE limpeza_agenda SET apagar_em = ? WHERE message_id = ?",
+                (apagar_em.isoformat(timespec="seconds"), message_id),
+            )
+        return cur.rowcount == 1
+
+    def mensagens_vencidas(self, agora_dt: datetime) -> list[tuple[int, int, int]]:
+        """[(message_id, channel_id, guild_id)] cujo prazo já passou."""
+        rows = self.conn.execute(
+            "SELECT message_id, channel_id, guild_id FROM limpeza_agenda WHERE apagar_em <= ? ORDER BY apagar_em",
+            (agora_dt.isoformat(timespec="seconds"),),
+        ).fetchall()
+        return [(r[0], r[1], r[2]) for r in rows]
+
+    def desagendar(self, message_id: int) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM limpeza_agenda WHERE message_id = ?", (message_id,))

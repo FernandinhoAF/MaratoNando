@@ -122,13 +122,15 @@ Quando aparecer `Logado como MaratoNando...`, está funcionando. Para desligar, 
 
 ## Colocando na Discloud
 
-O arquivo `discloud.config` já está pronto. Na hora de subir:
+1. **Desligue o bot no seu PC** (`Ctrl + C`). O mesmo bot não pode rodar em dois lugares ao mesmo tempo: os dois responderiam aos comandos e mandariam alertas em dobro.
+2. Monte o zip com o script da pasta:
+   - **Primeira vez:** `python empacotar_discloud.py --com-banco` (leva o banco de dados, com tudo que você já configurou).
+   - **Atualizações:** `python empacotar_discloud.py` (sem o banco, para não apagar o que está rodando lá).
+3. Na [Discloud](https://discloud.com), vá em **Dashboard → + Upload → Upload ZIP** e envie o `MaratoNando-discloud.zip` (na primeira vez) ou use a opção de atualizar (commit) do app, nas próximas.
 
-1. Deixe `DEV_GUILD_ID` **vazio** no `.env` (assim os comandos ficam disponíveis em todos os servidores).
-2. Compacte em um `.zip` os arquivos `bot.py`, `db.py`, `radar.py`, `sugestao.py`, `times.py`, `biblioteca.py`, as pastas `cogs` e `servicos`, `requirements.txt`, `discloud.config` e o `.env`.
-3. Suba o `.zip` na Discloud.
+O `discloud.config` já está pronto (`RAM=128`). O zip já leva o `.env` com os tokens; ele **nunca** vai para o GitHub (está no `.gitignore`, assim como o zip).
 
-> Se você testou com `DEV_GUILD_ID` e depois ligou sem ele, os comandos podem aparecer **duplicados** no servidor de testes. Para resolver, ligue o bot uma vez localmente com `DEV_GUILD_ID` preenchido e comente a linha `self.tree.copy_global_to(guild=guild)` no `bot.py`: isso limpa os comandos do servidor de testes.
+> **Sobre o `DEV_GUILD_ID`:** para um bot de um servidor só, vale deixar o ID do seu servidor preenchido também na Discloud. Os comandos aparecem na hora e não ficam duplicados. Se um dia o bot for para outros servidores, deixe vazio (os comandos passam a valer em todos, depois de alguns minutos) e limpe os comandos antigos do seu servidor.
 
 ## Testes
 
@@ -171,6 +173,7 @@ MaratoNando/
 │   ├── test_biblioteca.py # testes do custo para o grupo e das contas Steam
 │   └── test_chamar.py # testes do cargo de jogos e do /chamar
 ├── requirements.txt
+├── empacotar_discloud.py # monta o .zip para subir na Discloud
 ├── .env.example       # modelo do arquivo de configuração
 └── discloud.config
 ```

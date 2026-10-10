@@ -16,6 +16,7 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 - **🛒 Sugestões da Steam** (`/sugestao`): jogos co-op online em alta, novidades ou em promoção, filtrados pelas tags da Steam para sobrar só friendslop: precisa ter tag de jogar junto (Online Co-Op, Party Game…) **e** de diversão (Funny, Comedy, Social Deduction, Physics…), nenhuma tag de jogo "sério" (MMO, Competitive, Sports), preço baixo e 80%+ de avaliações positivas.
 - **👥 Sorteio de times** (`/times`): começa a lista com quem está na call (ou com os participantes da maratona), pergunta se mais alguém vai jogar e só então sorteia times equilibrados.
 - **🧹 Chat limpo**: com `/config canal-do-bot`, o bot ganha um canal próprio onde as mensagens ficam. Em qualquer outro canal, as mensagens dele somem sozinhas depois de alguns minutos (padrão: 10). Se alguém estiver usando os botões de uma mensagem, o prazo recomeça; e o painel de uma maratona aberta só some depois que ela acaba.
+- **💸 Avisos de promoção**: a cada 6 horas o bot confere na Steam o preço dos jogos que estão nas listas pessoais. Quando um deles entra em promoção (ou o desconto aumenta), ele avisa no canal do bot dizendo de quem é a lista. O `/lista ver` também mostra quais jogos da sua lista estão em promoção.
 - **Mural da Vergonha**: `/reclamou @pessoa`, ou botão direito na pessoa → Apps → **Reclamou!**
 - **Resumo final**: o que foi jogado, em que ordem, quem escolheu, o que ficou na roleta e o ranking de reclamações.
 - **Aguenta reinícios**: tudo fica salvo em SQLite, e os botões do painel continuam funcionando depois que o bot reinicia.
@@ -37,6 +38,7 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 | `/times [quantidade]` | Monta a lista de quem vai jogar e sorteia os times (2 a 8) | Qualquer pessoa (só quem pediu sorteia) |
 | `/config canal-do-bot [canal]` | Define o canal do bot; fora dele, as mensagens do bot somem sozinhas (vazio = desliga) | Quem tem *Gerenciar servidor* |
 | `/config apagar-depois minutos` | Quanto tempo as mensagens ficam fora do canal do bot (0 = nunca apagar) | Quem tem *Gerenciar servidor* |
+| `/config promocoes ativo` | Liga/desliga os avisos de promoção (vão para o canal do bot) | Quem tem *Gerenciar servidor* |
 | `/config ver` | Mostra as configurações | Quem tem *Gerenciar servidor* |
 | `/radar ver` | Mostra as sugestões de jogos, com menu para salvar na sua lista | Qualquer pessoa |
 | `/radar streamers` | Mostra quem o radar acompanha, o preço máximo e o canal de alertas | Qualquer pessoa |
@@ -130,7 +132,8 @@ MaratoNando/
 │   ├── maratona.py    # comandos, botões, formulários, roleta e embeds da maratona
 │   ├── radar.py       # /radar, /sugestao e a coleta automática a cada 10 minutos
 │   ├── times.py       # /times
-│   └── limpeza.py     # /config e a faxina das mensagens fora do canal do bot
+│   ├── limpeza.py     # /config e a faxina das mensagens fora do canal do bot
+│   └── promocoes.py   # vigia de promoções dos jogos das listas
 ├── servicos/
 │   ├── twitch.py      # cliente da API oficial da Twitch
 │   └── steam.py       # consultas à loja da Steam
@@ -139,7 +142,8 @@ MaratoNando/
 │   ├── test_radar.py  # testes do radar (com respostas reais da Steam)
 │   ├── test_sugestao.py # testes do filtro do /sugestao
 │   ├── test_times.py  # testes do sorteio de times
-│   └── test_limpeza.py # testes da agenda de limpeza
+│   ├── test_limpeza.py # testes da agenda de limpeza
+│   └── test_promocoes.py # testes dos avisos de promoção
 ├── requirements.txt
 ├── .env.example       # modelo do arquivo de configuração
 └── discloud.config

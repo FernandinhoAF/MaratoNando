@@ -105,6 +105,8 @@ class SalvarSugestaoBotao(discord.ui.DynamicItem[discord.ui.Button], template=r"
             await interaction.response.send_message("Não achei mais esse jogo no radar. 🤔", ephemeral=True)
             return
         salvos, recusados = db.salvar_na_lista(interaction.user.id, [info.nome_exibicao])
+        if info.appid:
+            db.salvar_steam_nome(info.nome_exibicao, info.appid)  # já sei qual jogo é: poupa uma busca
         await interaction.response.send_message(texto_resultado(salvos, recusados, "Salvo na sua lista"),
                                                 ephemeral=True)
 
@@ -116,6 +118,7 @@ class SugestoesView(discord.ui.View):
         super().__init__(timeout=900)
         self.db = db
         self.nomes = {s.info.game_id: s.info.nome_exibicao for s in sugestoes}
+        self.appids = {s.info.game_id: s.info.appid for s in sugestoes}
         menu = discord.ui.Select(
             placeholder="💾 Salvar jogos na minha lista…", min_values=1, max_values=len(sugestoes),
             options=[discord.SelectOption(label=s.info.nome_exibicao[:100], value=s.info.game_id)
@@ -131,6 +134,9 @@ class SugestoesView(discord.ui.View):
     async def salvar(self, interaction: discord.Interaction) -> None:
         nomes = [self.nomes[v] for v in self.menu.values]
         salvos, recusados = self.db.salvar_na_lista(interaction.user.id, nomes)
+        for v in self.menu.values:
+            if self.appids.get(v):
+                self.db.salvar_steam_nome(self.nomes[v], self.appids[v])
         await interaction.response.send_message(texto_resultado(salvos, recusados, "Salvo na sua lista"),
                                                 ephemeral=True)
 
@@ -199,6 +205,9 @@ class SugestoesLojaView(discord.ui.View):
         escolhidos = {int(v) for v in menu.values}
         nomes = [i.nome for i in self.da_pagina() if i.appid in escolhidos]
         salvos, recusados = self.cog.db.salvar_na_lista(interaction.user.id, nomes)
+        for i in self.da_pagina():
+            if i.appid in escolhidos:
+                self.cog.db.salvar_steam_nome(i.nome, i.appid)
         await interaction.response.send_message(texto_resultado(salvos, recusados, "Salvo na sua lista"),
                                                 ephemeral=True)
 

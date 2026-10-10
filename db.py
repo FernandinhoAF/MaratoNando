@@ -150,9 +150,42 @@ CREATE TABLE IF NOT EXISTS limpeza_agenda (
     guild_id   INTEGER NOT NULL,
     apagar_em  TEXT    NOT NULL
 );
+
+-- ===== Promoções dos jogos das listas =====
+
+-- Em quais servidores cada pessoa usa o bot (para saber onde avisar das promoções dela).
+CREATE TABLE IF NOT EXISTS usuarios_servidores (
+    user_id  INTEGER NOT NULL,
+    guild_id INTEGER NOT NULL,
+    PRIMARY KEY (user_id, guild_id)
+);
+
+-- Nome de jogo (como está nas listas) → jogo na Steam.
+CREATE TABLE IF NOT EXISTS steam_nomes (
+    chave         TEXT PRIMARY KEY,  -- nome em minúsculas
+    nome          TEXT NOT NULL,
+    appid         INTEGER,           -- NULL = não achei na Steam
+    verificado_em TEXT NOT NULL
+);
+
+-- Promoções em andamento (some daqui quando a promoção acaba).
+CREATE TABLE IF NOT EXISTS promocoes (
+    appid          INTEGER PRIMARY KEY,
+    nome           TEXT    NOT NULL,
+    desconto       INTEGER NOT NULL,
+    preco_texto    TEXT,
+    original_texto TEXT,
+    desde          TEXT    NOT NULL
+);
 """
 
+# Colunas criadas depois da primeira versão: adicionadas sozinhas em bancos antigos.
+MIGRACOES = [
+    ("limpeza_config", "avisar_promocoes", "INTEGER NOT NULL DEFAULT 1"),
+]
+
 MINUTOS_LIMPEZA_PADRAO = 10
+RECHECAR_NOME_STEAM_DIAS = 14
 
 RECHECAR_STEAM_DIAS = 3       # preço/promoção mudam: confere de novo a cada 3 dias
 RECHECAR_SEM_STEAM_DIAS = 14  # jogo que não achei na Steam: tenta de novo em 2 semanas
@@ -241,6 +274,11 @@ def separar_nomes(texto: str) -> list[str]:
     return [n for n in nomes if n]
 
 
+def chave_nome(nome: str) -> str:
+    """Versão do nome usada para achar repetidos ("HADES" == "hades")."""
+    return nome.casefold()
+
+
 def _chave(nome: str) -> str:
     """Versão do nome usada para achar repetidos ("HADES" == "hades")."""
     return nome.casefold()
@@ -254,7 +292,20 @@ class Database:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
+        self._migrar()
         self.conn.commit()
+
+    def _migrar(self) -> None:
+        """Atualiza bancos criados por versões antigas do bot, sem perder nada."""
+        for tabela, coluna, tipo in MIGRACOES:
+            colunas = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({tabela})")}
+            if coluna not in colunas:
+                self.conn.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
+        # Quem já colocou jogo em maratona de um servidor conta como "usa o bot" lá.
+        self.conn.execute(
+            "INSERT OR IGNORE INTO usuarios_servidores (user_id, guild_id)"
+            " SELECT DISTINCT j.user_id, m.guild_id FROM jogos j JOIN maratonas m ON m.id = j.maratona_id"
+        )
 
     def fechar(self) -> None:
         self.conn.close()
@@ -706,3 +757,111 @@ class Database:
     def desagendar(self, message_id: int) -> None:
         with self.conn:
             self.conn.execute("DELETE FROM limpeza_agenda WHERE message_id = ?", (message_id,))
+
+    # ---- promoções -------------------------------------------------
+
+    def registrar_usuario_servidor(self, user_id: int, guild_id: int) -> None:
+        with self.conn:
+            self.conn.execute("INSERT OR IGNORE INTO usuarios_servidores (user_id, guild_id) VALUES (?, ?)",
+                              (user_id, guild_id))
+
+    def avisar_promocoes(self, guild_id: int) -> bool:
+        row = self.conn.execute("SELECT avisar_promocoes FROM limpeza_config WHERE guild_id = ?",
+                                (guild_id,)).fetchone()
+        return True if row is None else bool(row[0])
+
+    def definir_avisar_promocoes(self, guild_id: int, ativo: bool) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO limpeza_config (guild_id, avisar_promocoes) VALUES (?, ?)"
+                " ON CONFLICT (guild_id) DO UPDATE SET avisar_promocoes = excluded.avisar_promocoes",
+                (guild_id, int(ativo)),
+            )
+
+    def servidores_para_promocoes(self) -> list[tuple[int, int]]:
+        """[(guild_id, canal do bot)] dos servidores que querem avisos de promoção."""
+        rows = self.conn.execute(
+            "SELECT guild_id, canal_bot FROM limpeza_config WHERE canal_bot IS NOT NULL AND avisar_promocoes = 1"
+        ).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+    def salvar_steam_nome(self, nome: str, appid: int | None) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO steam_nomes (chave, nome, appid, verificado_em) VALUES (?, ?, ?, ?)",
+                (_chave(nome), nome, appid, agora()),
+            )
+
+    def nomes_sem_steam(self, limite: int = 30) -> list[str]:
+        """Nomes das listas que ainda não sei qual jogo da Steam são."""
+        velho = (datetime.now(timezone.utc) - timedelta(days=RECHECAR_NOME_STEAM_DIAS)).isoformat(timespec="seconds")
+        rows = self.conn.execute(
+            "SELECT MIN(l.nome) FROM lista_pessoal l LEFT JOIN steam_nomes s ON s.chave = l.chave"
+            " WHERE s.chave IS NULL OR (s.appid IS NULL AND s.verificado_em < ?)"
+            " GROUP BY l.chave LIMIT ?",
+            (velho, limite),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def appids_das_listas(self) -> dict[int, str]:
+        """{appid: nome} de todos os jogos que estão em alguma lista."""
+        rows = self.conn.execute(
+            "SELECT DISTINCT s.appid, s.nome FROM lista_pessoal l JOIN steam_nomes s ON s.chave = l.chave"
+            " WHERE s.appid IS NOT NULL"
+        ).fetchall()
+        return {r[0]: r[1] for r in rows}
+
+    def atualizar_promocao(self, appid: int, nome: str, desconto: int,
+                           preco_texto: str | None, original_texto: str | None) -> str | None:
+        """Grava o desconto atual e diz se vale avisar.
+
+        "nova" = acabou de entrar em promoção; "maior" = o desconto aumentou;
+        None = nada a avisar (sem promoção, ou a mesma promoção de antes).
+        """
+        anterior = self.conn.execute("SELECT desconto FROM promocoes WHERE appid = ?", (appid,)).fetchone()
+        with self.conn:
+            if desconto <= 0:
+                self.conn.execute("DELETE FROM promocoes WHERE appid = ?", (appid,))  # promoção acabou
+                return None
+            self.conn.execute(
+                "INSERT INTO promocoes (appid, nome, desconto, preco_texto, original_texto, desde)"
+                " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (appid) DO UPDATE SET"
+                " desconto = excluded.desconto, preco_texto = excluded.preco_texto,"
+                " original_texto = excluded.original_texto",
+                (appid, nome, desconto, preco_texto, original_texto, agora()),
+            )
+        if anterior is None:
+            return "nova"
+        return "maior" if desconto > anterior[0] else None
+
+    def promocao(self, appid: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM promocoes WHERE appid = ?", (appid,)).fetchone()
+
+    def status_steam_da_lista(self, user_id: int) -> dict[str, int | None]:
+        """{chave: appid} dos jogos da lista já procurados na Steam (appid None = não achei)."""
+        rows = self.conn.execute(
+            "SELECT l.chave, s.appid FROM lista_pessoal l JOIN steam_nomes s ON s.chave = l.chave"
+            " WHERE l.user_id = ?", (user_id,),
+        ).fetchall()
+        return {r[0]: r[1] for r in rows}
+
+    def interessados(self, guild_id: int, appid: int) -> list[int]:
+        """Quem usa o bot neste servidor e tem esse jogo na lista."""
+        rows = self.conn.execute(
+            "SELECT DISTINCT l.user_id FROM lista_pessoal l"
+            " JOIN steam_nomes s ON s.chave = l.chave AND s.appid = ?"
+            " JOIN usuarios_servidores u ON u.user_id = l.user_id AND u.guild_id = ?"
+            " ORDER BY l.user_id",
+            (appid, guild_id),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def promocoes_da_lista(self, user_id: int) -> dict[str, sqlite3.Row]:
+        """{chave do jogo: promoção} dos jogos da lista da pessoa que estão em promoção agora."""
+        rows = self.conn.execute(
+            "SELECT l.chave, p.* FROM lista_pessoal l"
+            " JOIN steam_nomes s ON s.chave = l.chave JOIN promocoes p ON p.appid = s.appid"
+            " WHERE l.user_id = ?",
+            (user_id,),
+        ).fetchall()
+        return {r["chave"]: r for r in rows}

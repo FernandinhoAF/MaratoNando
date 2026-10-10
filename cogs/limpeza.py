@@ -119,6 +119,9 @@ class LimpezaCog(commands.Cog):
         e.add_field(name="Canal do bot", value=f"<#{canal_bot}>" if canal_bot else "Nenhum (nada é apagado)")
         e.add_field(name="Apagar fora dele depois de",
                     value="Nunca" if minutos == 0 else f"{minutos} min")
+        e.add_field(name="Avisos de promoção", value=(
+            "Ligados" if self.db.avisar_promocoes(guild_id) and canal_bot
+            else "Ligados, mas precisam do canal do bot" if self.db.avisar_promocoes(guild_id) else "Desligados"))
         if canal_bot and minutos:
             e.description = (f"Em <#{canal_bot}> as mensagens do bot ficam. Em qualquer outro canal, elas somem "
                              f"{minutos} min depois da última vez que alguém mexeu nelas. "
@@ -138,6 +141,13 @@ class LimpezaCog(commands.Cog):
     async def cmd_minutos(self, interaction: discord.Interaction,
                           minutos: app_commands.Range[int, 0, 1440]) -> None:
         self.db.definir_minutos_limpeza(interaction.guild_id, minutos)
+        await interaction.response.send_message(embed=self.embed_config(interaction.guild_id), ephemeral=True)
+
+    @config.command(name="promocoes",
+                    description="Liga/desliga os avisos de promoção dos jogos das listas (vão para o canal do bot).")
+    @app_commands.describe(ativo="Avisar quando um jogo das listas entrar em promoção na Steam?")
+    async def cmd_promocoes(self, interaction: discord.Interaction, ativo: bool) -> None:
+        self.db.definir_avisar_promocoes(interaction.guild_id, ativo)
         await interaction.response.send_message(embed=self.embed_config(interaction.guild_id), ephemeral=True)
 
     @config.command(name="ver", description="Mostra as configurações atuais.")

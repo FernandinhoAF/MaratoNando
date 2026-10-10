@@ -279,9 +279,20 @@ class MinhaListaView(discord.ui.View):
 
     def embed(self) -> discord.Embed:
         itens = self.cog.db.lista(self.user_id)
+        promocoes = self.cog.db.promocoes_da_lista(self.user_id)
+        steam = self.cog.db.status_steam_da_lista(self.user_id)
+        linhas = []
+        for i in itens:
+            linha = f"• {i.nome}"
+            if i.chave in promocoes:
+                p = promocoes[i.chave]
+                linha += f" · 💸 **−{p['desconto']}%** ({p['preco_texto']})"
+            elif i.chave in steam and steam[i.chave] is None:
+                linha += " · _(não achei na Steam, confira o nome)_"
+            linhas.append(linha)
         e = discord.Embed(
             title="📝 Sua lista de jogos", color=COR_PAINEL,
-            description=juntar([f"• {i.nome}" for i in itens], limite=4000,
+            description=juntar(linhas, limite=4000,
                                vazio="Sua lista está vazia. Use `/lista adicionar` para guardar jogos."),
         )
         e.set_footer(text="Só você vê esta lista. Na maratona, ela aparece quando você clica em Adicionar jogos.")

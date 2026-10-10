@@ -69,3 +69,16 @@ class SteamClient:
         params.update({k: str(v) for k, v in extra.items()})
         dados = await self._json(URL_LOJA, params)
         return ler_resultados(dados.get("results_html", ""))
+
+    async def preco(self, appid: int) -> dict | None:
+        """Só o preço de um jogo (bem mais leve que os detalhes completos).
+
+        Devolve o price_overview ({final, initial, discount_percent, final_formatted, ...}),
+        ou None se o jogo é grátis ou não está à venda no Brasil.
+        """
+        dados = await self._json(URL_DETALHES, {"appids": str(appid), "cc": self.pais,
+                                                "filters": "price_overview"})
+        bloco = dados.get(str(appid)) or {}
+        if not bloco.get("success") or not isinstance(bloco.get("data"), dict):
+            return None
+        return bloco["data"].get("price_overview")

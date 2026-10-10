@@ -1,0 +1,124 @@
+"""Avisa quando um jogo das listas pessoais entra em promoção na Steam.
+
+Como funciona (a cada 6 horas, e uma vez logo que o bot liga):
+  1. Cada nome de jogo das listas é procurado na Steam (só uma vez; o resultado fica guardado).
+  2. O bot confere o preço atual de cada jogo, um por vez, com pausa entre eles.
+  3. Se um jogo entrou em promoção (ou o desconto aumentou), o bot avisa no canal do bot
+     (/config canal-do-bot) de cada servidor onde alguém que tem esse jogo na lista usa o bot.
+     O aviso diz de quem é a lista, sem mandar notificação (nada de DM nem de ping).
+  4. Quando a promoção acaba, o bot esquece dela; se o jogo entrar em promoção de novo, avisa de novo.
+"""
+
+import asyncio
+import logging
+from typing import Optional
+
+import aiohttp
+import discord
+from discord.ext import commands, tasks
+
+from cogs.maratona import SEM_PING, juntar
+from db import Database
+from radar import escolher_resultado
+from servicos.steam import PAUSA, ErroSteam, SteamClient
+
+log = logging.getLogger("maratonando.promocoes")
+
+COR_PROMO = discord.Color.from_rgb(91, 163, 0)  # verde Steam
+INTERVALO_HORAS = 6
+
+
+class PromocoesCog(commands.Cog):
+    def __init__(self, bot: commands.Bot) -> None:
+        self.bot = bot
+        self.db: Database = bot.db  # type: ignore[attr-defined]
+        self.session: Optional[aiohttp.ClientSession] = None
+        self.steam: Optional[SteamClient] = None
+        self.verificando = asyncio.Lock()
+
+    async def cog_load(self) -> None:
+        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20))
+        self.steam = SteamClient(self.session)
+        self.ciclo.start()
+
+    async def cog_unload(self) -> None:
+        self.ciclo.cancel()
+        if self.session:
+            await self.session.close()
+
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        """Anota em quais servidores cada pessoa usa o bot (é lá que as promoções dela são avisadas)."""
+        if interaction.guild_id is not None:
+            self.db.registrar_usuario_servidor(interaction.user.id, interaction.guild_id)
+
+    @tasks.loop(hours=INTERVALO_HORAS)
+    async def ciclo(self) -> None:
+        try:
+            await self.verificar()
+        except Exception:
+            log.exception("Erro ao verificar promoções")
+
+    @ciclo.before_loop
+    async def antes_do_ciclo(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def verificar(self) -> None:
+        async with self.verificando:
+            try:
+                # 1. Descobre qual jogo da Steam é cada nome novo das listas.
+                for nome in self.db.nomes_sem_steam():
+                    self.db.salvar_steam_nome(nome, escolher_resultado(nome, await self.steam.buscar(nome)))
+                    await asyncio.sleep(PAUSA)
+
+                # 2. Confere os preços.
+                avisos: list[tuple[int, str]] = []
+                for appid, nome in self.db.appids_das_listas().items():
+                    preco = await self.steam.preco(appid)
+                    await asyncio.sleep(PAUSA)
+                    desconto = int((preco or {}).get("discount_percent") or 0)
+                    tipo = self.db.atualizar_promocao(appid, nome, desconto, (preco or {}).get("final_formatted"),
+                                                      (preco or {}).get("initial_formatted"))
+                    if tipo:
+                        avisos.append((appid, tipo))
+            except (ErroSteam, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                log.warning("Steam indisponível (%s); tento de novo no próximo ciclo", exc)
+                return
+
+        # 3. Avisa.
+        for appid, tipo in avisos:
+            await self.anunciar(appid, tipo)
+
+    def embed_promocao(self, promo, tipo: str, pessoas: list[int]) -> discord.Embed:
+        titulo = "ficou ainda mais barato" if tipo == "maior" else "está em promoção"
+        preco = f"**{promo['preco_texto']}** (−{promo['desconto']}%)"
+        if promo["original_texto"]:
+            preco = f"~~{promo['original_texto']}~~ → {preco}"
+        e = discord.Embed(
+            title=f"💸 {promo['nome']} {titulo}!", color=COR_PROMO,
+            url=f"https://store.steampowered.com/app/{promo['appid']}/",
+            description=f"{preco}\n\nBoa hora de garantir antes da próxima maratona! 🎮",
+        )
+        e.add_field(name="📝 Está na lista de", value=juntar([f"<@{p}>" for p in pessoas]), inline=False)
+        return e
+
+    async def anunciar(self, appid: int, tipo: str) -> None:
+        promo = self.db.promocao(appid)
+        if promo is None:
+            return
+        for guild_id, canal_id in self.db.servidores_para_promocoes():
+            pessoas = self.db.interessados(guild_id, appid)
+            canal = self.bot.get_channel(canal_id)
+            if not pessoas or canal is None:
+                continue
+            view = discord.ui.View()
+            view.add_item(discord.ui.Button(label="Ver na Steam", url=f"https://store.steampowered.com/app/{appid}/"))
+            try:
+                await canal.send(embed=self.embed_promocao(promo, tipo, pessoas), view=view,
+                                 allowed_mentions=SEM_PING)
+            except discord.HTTPException as exc:
+                log.warning("Não consegui avisar a promoção no canal %s: %s", canal_id, exc)
+
+
+async def setup(bot: commands.Bot) -> None:
+    await bot.add_cog(PromocoesCog(bot))

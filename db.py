@@ -217,12 +217,39 @@ CREATE TABLE IF NOT EXISTS steam_apps (
     coop           INTEGER NOT NULL,
     verificado_em  TEXT    NOT NULL
 );
+
+-- ===== /chamar =====
+
+CREATE TABLE IF NOT EXISTS chamados (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id    INTEGER NOT NULL,
+    channel_id  INTEGER NOT NULL,
+    message_id  INTEGER,
+    autor_id    INTEGER NOT NULL,
+    jogo        TEXT,               -- NULL = "bora jogar alguma coisa?"
+    pessoas     INTEGER,            -- quantas pessoas fecham o grupo (NULL = sem número)
+    fechou_em   TEXT,               -- quando bateu o número de pessoas
+    encerrado   INTEGER NOT NULL DEFAULT 0,
+    criado_em   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS chamado_respostas (
+    chamado_id   INTEGER NOT NULL REFERENCES chamados (id) ON DELETE CASCADE,
+    user_id      INTEGER NOT NULL,
+    resposta     TEXT    NOT NULL,  -- 'bora', 'depois' ou 'nao'
+    respondido_em TEXT   NOT NULL,
+    PRIMARY KEY (chamado_id, user_id)
+);
 """
 
 # Colunas criadas depois da primeira versão: adicionadas sozinhas em bancos antigos.
 MIGRACOES = [
     ("limpeza_config", "avisar_promocoes", "INTEGER NOT NULL DEFAULT 1"),
+    ("limpeza_config", "cargo_jogos", "INTEGER"),        # cargo marcado para chamar o pessoal
+    ("limpeza_config", "ultimo_ping_cargo", "TEXT"),     # quando o bot marcou esse cargo pela última vez
 ]
+
+MINUTOS_ENTRE_PINGS = 30  # o cargo é marcado no máximo uma vez a cada 30 minutos
 
 MINUTOS_LIMPEZA_PADRAO = 10
 RECHECAR_NOME_STEAM_DIAS = 14
@@ -1013,3 +1040,83 @@ class Database:
             f"SELECT DISTINCT s.appid FROM lista_pessoal l JOIN steam_nomes s ON s.chave = l.chave"
             f" WHERE s.appid IS NOT NULL AND l.user_id IN ({marcas})", tuple(user_ids))
         return {r[0] for r in rows}
+
+    # ---- cargo de jogos --------------------------------------------
+
+    def cargo_jogos(self, guild_id: int) -> int | None:
+        row = self.conn.execute("SELECT cargo_jogos FROM limpeza_config WHERE guild_id = ?", (guild_id,)).fetchone()
+        return row[0] if row else None
+
+    def definir_cargo_jogos(self, guild_id: int, cargo_id: int | None) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO limpeza_config (guild_id, cargo_jogos) VALUES (?, ?)"
+                " ON CONFLICT (guild_id) DO UPDATE SET cargo_jogos = excluded.cargo_jogos",
+                (guild_id, cargo_id),
+            )
+
+    def tentar_marcar_cargo(self, guild_id: int, agora_dt: datetime | None = None) -> bool:
+        """True (e anota o horário) se já passou o tempo mínimo desde a última marcação do cargo."""
+        agora_dt = agora_dt or datetime.now(timezone.utc)
+        row = self.conn.execute("SELECT ultimo_ping_cargo FROM limpeza_config WHERE guild_id = ?",
+                                (guild_id,)).fetchone()
+        if row and row[0] and datetime.fromisoformat(row[0]) > agora_dt - timedelta(minutes=MINUTOS_ENTRE_PINGS):
+            return False
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO limpeza_config (guild_id, ultimo_ping_cargo) VALUES (?, ?)"
+                " ON CONFLICT (guild_id) DO UPDATE SET ultimo_ping_cargo = excluded.ultimo_ping_cargo",
+                (guild_id, agora_dt.isoformat(timespec="seconds")),
+            )
+        return True
+
+    # ---- /chamar ---------------------------------------------------
+
+    def criar_chamado(self, guild_id: int, channel_id: int, autor_id: int,
+                      jogo: str | None, pessoas: int | None) -> int:
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO chamados (guild_id, channel_id, autor_id, jogo, pessoas, criado_em)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (guild_id, channel_id, autor_id, jogo, pessoas, agora()),
+            )
+        self.responder_chamado(cur.lastrowid, autor_id, "bora")  # quem chamou já está dentro
+        return cur.lastrowid
+
+    def definir_mensagem_chamado(self, chamado_id: int, message_id: int) -> None:
+        with self.conn:
+            self.conn.execute("UPDATE chamados SET message_id = ? WHERE id = ?", (message_id, chamado_id))
+
+    def chamado(self, chamado_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM chamados WHERE id = ?", (chamado_id,)).fetchone()
+
+    def responder_chamado(self, chamado_id: int, user_id: int, resposta: str) -> None:
+        if resposta not in ("bora", "depois", "nao"):
+            raise ValueError(resposta)
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO chamado_respostas (chamado_id, user_id, resposta, respondido_em) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (chamado_id, user_id) DO UPDATE SET resposta = excluded.resposta,"
+                " respondido_em = excluded.respondido_em",
+                (chamado_id, user_id, resposta, agora()),
+            )
+
+    def respostas_chamado(self, chamado_id: int) -> dict[str, list[int]]:
+        """{'bora': [...], 'depois': [...], 'nao': [...]} na ordem em que responderam."""
+        saida: dict[str, list[int]] = {"bora": [], "depois": [], "nao": []}
+        for r in self.conn.execute(
+                "SELECT user_id, resposta FROM chamado_respostas WHERE chamado_id = ? ORDER BY respondido_em, rowid",
+                (chamado_id,)):
+            saida[r["resposta"]].append(r["user_id"])
+        return saida
+
+    def marcar_chamado_fechado(self, chamado_id: int) -> bool:
+        """True só na primeira vez que o chamado bate o número de pessoas."""
+        with self.conn:
+            cur = self.conn.execute("UPDATE chamados SET fechou_em = ? WHERE id = ? AND fechou_em IS NULL",
+                                    (agora(), chamado_id))
+        return cur.rowcount == 1
+
+    def encerrar_chamado(self, chamado_id: int) -> None:
+        with self.conn:
+            self.conn.execute("UPDATE chamados SET encerrado = 1 WHERE id = ?", (chamado_id,))

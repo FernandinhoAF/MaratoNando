@@ -83,6 +83,22 @@ def texto_resultado(adicionados: list[str], recusados: list[tuple[str, str]], ti
     return "\n\n".join(partes)
 
 
+def mencao_do_cargo(db: Database, guild_id: int) -> tuple[str, discord.AllowedMentions, str]:
+    """Prepara a marcação do cargo de jogos (/config cargo-jogos).
+
+    Devolve (texto da menção, permissão de notificação, aviso para quem chamou).
+    O cargo só é marcado de verdade se já passou o tempo mínimo desde a última vez;
+    senão, o texto vem vazio e o aviso explica.
+    """
+    cargo = db.cargo_jogos(guild_id)
+    if cargo is None:
+        return "", SEM_PING, ""
+    if not db.tentar_marcar_cargo(guild_id):
+        return "", SEM_PING, " (o cargo foi marcado há pouco, então dessa vez não marquei de novo)"
+    return f"<@&{cargo}> ", discord.AllowedMentions(everyone=False, users=False,
+                                                    roles=[discord.Object(id=cargo)]), ""
+
+
 async def responder_privado(interaction: discord.Interaction, texto: str) -> None:
     """Resposta que só quem clicou/usou o comando vê."""
     if interaction.response.is_done():
@@ -482,9 +498,10 @@ class MaratonaCog(commands.Cog):
         except discord.HTTPException as exc:
             log.warning("Não consegui atualizar o painel da maratona %s: %s", maratona_id, exc)
 
-    async def enviar_painel(self, interaction: discord.Interaction, m: Maratona) -> None:
-        await interaction.response.send_message(embed=self.embed_painel(m), view=self.painel_view,
-                                                allowed_mentions=SEM_PING)
+    async def enviar_painel(self, interaction: discord.Interaction, m: Maratona, texto: Optional[str] = None,
+                            mencoes: discord.AllowedMentions = SEM_PING) -> None:
+        await interaction.response.send_message(texto, embed=self.embed_painel(m), view=self.painel_view,
+                                                allowed_mentions=mencoes)
         msg = await interaction.original_response()
         self.db.definir_painel(m.id, msg.channel.id, msg.id)
 
@@ -546,17 +563,29 @@ class MaratonaCog(commands.Cog):
 
     @maratona.command(name="criar", description="Abre uma nova maratona de jogos neste canal.")
     @app_commands.describe(nome="Nome da maratona (opcional)",
-                           limite="Máximo de jogos por pessoa (opcional; sem limite se ficar vazio)")
+                           limite="Máximo de jogos por pessoa (opcional; sem limite se ficar vazio)",
+                           avisar="Marcar o cargo de jogos? (padrão: sim, se o cargo estiver configurado)")
     async def cmd_criar(self, interaction: discord.Interaction,
                         nome: Optional[app_commands.Range[str, 1, 60]] = None,
-                        limite: Optional[app_commands.Range[int, 1, 25]] = None) -> None:
+                        limite: Optional[app_commands.Range[int, 1, 25]] = None,
+                        avisar: bool = True) -> None:
         aberta = self.db.maratona_aberta(interaction.guild_id)
         if aberta:
             raise ErroMaratona(f"Já tem uma maratona aberta em <#{aberta.channel_id}>. "
                                "Encerre ela antes (ou use `/maratona painel` para achar o painel).")
         m = self.db.criar_maratona(interaction.guild_id, interaction.channel_id, interaction.user.id,
                                    nome or "Maratona de Jogos", limite)
-        await self.enviar_painel(interaction, m)
+        if avisar:
+            mencao, permissao, aviso = mencao_do_cargo(self.db, interaction.guild_id)
+        else:
+            mencao, permissao, aviso = "", SEM_PING, ""
+        texto = None
+        if mencao:
+            texto = (f"{mencao}🎮 **Maratona aberta!** Coloquem seus jogos na roleta (**➕ Adicionar jogos**) "
+                     "ou cliquem em **🙋 Tô jogando**.")
+        await self.enviar_painel(interaction, m, texto, permissao)
+        if aviso:
+            await interaction.followup.send(f"A maratona foi aberta{aviso}.", ephemeral=True)
 
     @maratona.command(name="painel", description="Traz o painel da maratona para o fim do chat.")
     async def cmd_painel(self, interaction: discord.Interaction) -> None:

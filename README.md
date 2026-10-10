@@ -19,6 +19,7 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 - **💸 Avisos de promoção**: a cada 6 horas o bot confere na Steam o preço dos jogos que estão nas listas pessoais. Quando um deles entra em promoção (ou o desconto aumenta), ele avisa no canal do bot marcando (com notificação) só quem tem aquele jogo na lista. O `/lista ver` também mostra quais jogos da sua lista estão em promoção.
 - **💰 Mais barato para o grupo** (`/maratona baratos`): cada pessoa vincula a Steam (ou um admin vincula por ela), e o bot cruza as bibliotecas de quem está jogando a maratona. Mostra os jogos multiplayer do mais barato para o grupo ao mais caro: o custo é o preço atual × quantas pessoas ainda não têm. Primeiro aparecem os que todo mundo já tem e os grátis. O mesmo cálculo aparece **no sorteio** ("✅ 3 têm · 🛒 falta para @Bia, R$ 14,87") e, só para quem está colocando, **ao colocar um jogo na roleta**, para todo mundo pensar no bolso dos amigos.
 - **🙋 Chegou no meio?** O botão **Tô jogando** do painel coloca a pessoa na maratona mesmo sem jogo na roleta, e ela passa a contar nos times e no `/maratona baratos`.
+- **📣 Chamar o pessoal**: com o cargo de jogos configurado (`/config cargo-jogos`), o bot marca o cargo quando alguém abre uma maratona. E o `/chamar [jogo] [pessoas]` posta um chamado marcando o cargo: cada um responde com um clique (✋ Bora · ⏰ Daqui a pouco · ❌ Hoje não), e quando bate o número de pessoas o bot marca só quem confirmou ("Fechou o grupo!"). Com a Steam ligada, mostra quem dos confirmados tem o jogo (ou, sem jogo escolhido, os mais baratos para eles). O cargo é marcado no máximo uma vez a cada 30 minutos.
 - **Mural da Vergonha**: `/reclamou @pessoa`, ou botão direito na pessoa → Apps → **Reclamou!**
 - **Resumo final**: o que foi jogado, em que ordem, quem escolheu, o que ficou na roleta e o ranking de reclamações.
 - **Aguenta reinícios**: tudo fica salvo em SQLite, e os botões do painel continuam funcionando depois que o bot reinicia.
@@ -28,7 +29,8 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 
 | Comando | O que faz | Quem pode |
 |---|---|---|
-| `/maratona criar [nome] [limite]` | Abre uma maratona no canal e posta o painel | Qualquer pessoa |
+| `/maratona criar [nome] [limite] [avisar]` | Abre uma maratona no canal e posta o painel (marca o cargo de jogos, a não ser que `avisar` seja Não) | Qualquer pessoa |
+| `/chamar [jogo] [pessoas]` | Chama o pessoal para jogar, marcando o cargo de jogos | Qualquer pessoa |
 | `/maratona sortear` | Gira a roleta (o mesmo que o botão 🎲) | Quem organizou ou quem tem *Gerenciar servidor* |
 | `/maratona painel` | Traz o painel para o fim do chat | Qualquer pessoa |
 | `/maratona encerrar` | Encerra e mostra o resumo (pede confirmação) | Quem organizou ou quem tem *Gerenciar servidor* |
@@ -46,6 +48,7 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 | `/config canal-do-bot [canal]` | Define o canal do bot; fora dele, as mensagens do bot somem sozinhas (vazio = desliga) | Quem tem *Gerenciar servidor* |
 | `/config apagar-depois minutos` | Quanto tempo as mensagens ficam fora do canal do bot (0 = nunca apagar) | Quem tem *Gerenciar servidor* |
 | `/config promocoes ativo` | Liga/desliga os avisos de promoção (vão para o canal do bot) | Quem tem *Gerenciar servidor* |
+| `/config cargo-jogos [cargo]` | Cargo marcado ao abrir maratona e no `/chamar` (vazio = ninguém) | Quem tem *Gerenciar servidor* |
 | `/config ver` | Mostra as configurações | Quem tem *Gerenciar servidor* |
 | `/radar ver` | Mostra as sugestões de jogos, com menu para salvar na sua lista | Qualquer pessoa |
 | `/radar streamers` | Mostra quem o radar acompanha, o preço máximo e o canal de alertas | Qualquer pessoa |
@@ -152,7 +155,8 @@ MaratoNando/
 │   ├── times.py       # /times
 │   ├── limpeza.py     # /config e a faxina das mensagens fora do canal do bot
 │   ├── promocoes.py   # vigia de promoções dos jogos das listas
-│   └── steam.py       # /steam e o /maratona baratos
+│   ├── steam.py       # /steam e o /maratona baratos
+│   └── chamar.py      # /chamar
 ├── servicos/
 │   ├── twitch.py      # cliente da API oficial da Twitch
 │   ├── steam.py       # consultas à loja da Steam
@@ -164,7 +168,8 @@ MaratoNando/
 │   ├── test_times.py  # testes do sorteio de times
 │   ├── test_limpeza.py # testes da agenda de limpeza
 │   ├── test_promocoes.py # testes dos avisos de promoção
-│   └── test_biblioteca.py # testes do custo para o grupo e das contas Steam
+│   ├── test_biblioteca.py # testes do custo para o grupo e das contas Steam
+│   └── test_chamar.py # testes do cargo de jogos e do /chamar
 ├── requirements.txt
 ├── .env.example       # modelo do arquivo de configuração
 └── discloud.config

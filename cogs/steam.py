@@ -215,7 +215,11 @@ class SteamCog(commands.Cog):
         return app
 
     async def quem_tem(self, maratona_id: int, nome: str) -> Optional[tuple[Opcao, list[int]]]:
-        """(quem tem / quem falta / custo, quem não dá para saber) de um jogo, para os jogadores da maratona.
+        """Igual ao quem_tem_para, usando os jogadores da maratona."""
+        return await self.quem_tem_para(self.db.jogadores(maratona_id), nome)
+
+    async def quem_tem_para(self, jogadores: list[int], nome: str) -> Optional[tuple[Opcao, list[int]]]:
+        """(quem tem / quem falta / custo, quem não dá para saber) de um jogo, para essas pessoas.
 
         None quando não dá para calcular: sem chave da Steam, ninguém com Steam vinculada,
         jogo não encontrado na Steam ou a Steam fora do ar. Nunca levanta erro: quem chama
@@ -224,7 +228,6 @@ class SteamCog(commands.Cog):
         if self.api is None:
             return None
         try:
-            jogadores = self.db.jogadores(maratona_id)
             await self.atualizar_bibliotecas(jogadores)
             bibliotecas = self.db.bibliotecas(jogadores)
             if not bibliotecas:
@@ -240,6 +243,23 @@ class SteamCog(commands.Cog):
         except Exception as exc:  # informação extra: se falhar, o sorteio segue normal
             log.warning("Não consegui calcular quem tem %r: %s", nome, exc)
             return None
+
+    async def mais_baratos_para(self, jogadores: list[int], limite: int = 3) -> list[Opcao]:
+        """Os jogos multiplayer mais baratos para essas pessoas (lista vazia se não der para calcular)."""
+        if self.api is None or not jogadores:
+            return []
+        try:
+            await self.atualizar_bibliotecas(jogadores)
+            bibliotecas = self.db.bibliotecas(jogadores)
+            if not bibliotecas:
+                return []
+            candidatos = escolher_candidatos(bibliotecas, self.db.appids_das_listas_de(jogadores))
+            await self.analisar_na_loja(candidatos, 20)  # rápido: o resto já está guardado de outras vezes
+            apps = {a: app_da_linha(r) for a, r in self.db.apps(candidatos).items()}
+            return calcular_opcoes(bibliotecas, apps, candidatos)[:limite]
+        except Exception as exc:
+            log.warning("Não consegui calcular os mais baratos: %s", exc)
+            return []
 
     # ---- /maratona baratos -----------------------------------------
 

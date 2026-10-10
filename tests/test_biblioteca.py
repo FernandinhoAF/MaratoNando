@@ -113,3 +113,20 @@ def test_apps_e_listas(db):
     db.salvar_steam_nome("PEAK", 10)
     assert db.appids_das_listas_de([ANA, BIA]) == {10}
     assert db.appids_das_listas_de([BIA]) == set()
+
+
+# ---------------------------------------------------------------- resumo "quem tem"
+
+def test_resumo_grupo():
+    from biblioteca import Opcao, resumo_grupo
+    peak = app(10, preco=1487, nome="PEAK")
+    assert resumo_grupo(Opcao(peak, [ANA, BIA], [])) == "✅ Todo mundo já tem"
+    um = resumo_grupo(Opcao(peak, [ANA], [BIA]))
+    assert um == "✅ 1 tem · 🛒 falta para <@2> (**R$ 14,87** no total)"
+    dois = resumo_grupo(Opcao(peak, [ANA], [BIA, CAIO]), sem_steam=[DUDA])
+    assert "falta para <@2> <@3> (R$ 14,87 cada · **R$ 29,74** no total)" in dois
+    assert "Não sei de <@4>" in dois
+    assert "falta para 2 pessoas" in resumo_grupo(Opcao(peak, [ANA], [BIA, CAIO]), mencoes=False)
+    assert resumo_grupo(Opcao(peak, [], [ANA])).startswith("❌ Ninguém tem ainda · 🛒 falta para <@1>")
+    gratis = app(20, preco=None, gratis=True)
+    assert resumo_grupo(Opcao(gratis, [ANA], [BIA])).startswith("🆓 Grátis")

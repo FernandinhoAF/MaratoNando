@@ -21,6 +21,7 @@ from discord.ext import commands
 
 from biblioteca import (AppSteam, Opcao, app_da_linha, app_de_detalhes, calcular_opcoes,
                         escolher_candidatos, ler_perfil, reais)
+from radar import escolher_resultado
 from cogs.maratona import SEM_PING, juntar, plural, tratar_erro
 from db import Database, ErroMaratona, Maratona, agora
 from servicos.steam import PAUSA, ErroSteam, SteamClient
@@ -192,6 +193,53 @@ class SteamCog(commands.Cog):
                     await progresso(n, min(len(faltam), limite))
                 await asyncio.sleep(PAUSA)
             return max(0, len(faltam) - limite)
+
+    # ---- "quem tem esse jogo?" (sorteio e roleta) --------------------
+
+    async def appid_do_nome(self, nome: str) -> Optional[int]:
+        """Descobre qual jogo da Steam é esse nome (e guarda, para não procurar de novo)."""
+        conhecido = self.db.conn.execute(
+            "SELECT appid, verificado_em FROM steam_nomes WHERE chave = ?", (nome.casefold(),)).fetchone()
+        if conhecido is not None and (conhecido["appid"] or not antes_de(conhecido["verificado_em"], days=14)):
+            return conhecido["appid"]
+        appid = escolher_resultado(nome, await self.loja.buscar(nome))
+        self.db.salvar_steam_nome(nome, appid)
+        return appid
+
+    async def app_atual(self, appid: int, nome: str = "") -> AppSteam:
+        guardado = self.db.apps([appid]).get(appid)
+        if guardado is not None and not antes_de(guardado["verificado_em"], days=LOJA_VALIDA_DIAS):
+            return app_da_linha(guardado)
+        app = app_de_detalhes(appid, await self.loja.detalhes(appid), agora(), nome)
+        self.db.salvar_app(app)
+        return app
+
+    async def quem_tem(self, maratona_id: int, nome: str) -> Optional[tuple[Opcao, list[int]]]:
+        """(quem tem / quem falta / custo, quem não dá para saber) de um jogo, para os jogadores da maratona.
+
+        None quando não dá para calcular: sem chave da Steam, ninguém com Steam vinculada,
+        jogo não encontrado na Steam ou a Steam fora do ar. Nunca levanta erro: quem chama
+        só mostra a informação se ela vier.
+        """
+        if self.api is None:
+            return None
+        try:
+            jogadores = self.db.jogadores(maratona_id)
+            await self.atualizar_bibliotecas(jogadores)
+            bibliotecas = self.db.bibliotecas(jogadores)
+            if not bibliotecas:
+                return None
+            appid = await self.appid_do_nome(nome)
+            if appid is None:
+                return None
+            app = await self.app_atual(appid, nome)
+            donos = [u for u in bibliotecas if appid in bibliotecas[u]]
+            faltam = [u for u in bibliotecas if appid not in bibliotecas[u]]
+            sem_steam = [u for u in jogadores if u not in bibliotecas]
+            return Opcao(app, donos, faltam), sem_steam
+        except Exception as exc:  # informação extra: se falhar, o sorteio segue normal
+            log.warning("Não consegui calcular quem tem %r: %s", nome, exc)
+            return None
 
     # ---- /maratona baratos -----------------------------------------
 

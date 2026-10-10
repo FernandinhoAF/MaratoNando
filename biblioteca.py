@@ -156,3 +156,35 @@ def calcular_opcoes(bibliotecas: dict[int, set[int]], apps: dict[int, AppSteam],
 
 def reais(centavos: int) -> str:
     return f"R$ {centavos / 100:.2f}".replace(".", ",")
+
+
+def resumo_grupo(o: Opcao, sem_steam: list[int] = (), mencoes: bool = True) -> str:
+    """Texto de "quem tem / quanto custa" de um jogo, para o sorteio e para quem coloca jogo na roleta."""
+    def nomes(ids):
+        return " ".join(f"<@{u}>" for u in ids) if mencoes else plural_pessoas(len(ids))
+
+    def quantos_tem() -> str:
+        if not o.donos:
+            return "❌ Ninguém tem ainda"
+        return f"✅ {len(o.donos)} {'tem' if len(o.donos) == 1 else 'têm'}"
+
+    if o.todos_tem:
+        texto = "✅ Todo mundo já tem"
+    elif o.app.gratis:
+        texto = f"🆓 Grátis na Steam · {quantos_tem()}"
+    else:
+        preco = o.app.preco_texto or reais(o.app.preco_centavos or 0)
+        if o.app.preco_centavos is None:
+            texto = f"{quantos_tem()} · 🛒 falta para {nomes(o.faltam)} (sem preço no Brasil)"
+        else:
+            cada = f"{preco} cada · " if len(o.faltam) > 1 else ""
+            desconto = f" · 💸 −{o.app.desconto}%" if o.app.desconto else ""
+            texto = (f"{quantos_tem()} · 🛒 falta para {nomes(o.faltam)} "
+                     f"({cada}**{reais(o.custo)}** no total){desconto}")
+    if sem_steam:
+        texto += f"\n❔ Não sei de {nomes(sem_steam)} (sem Steam vinculada ou com jogos privados)"
+    return texto
+
+
+def plural_pessoas(n: int) -> str:
+    return f"{n} pessoa" if n == 1 else f"{n} pessoas"

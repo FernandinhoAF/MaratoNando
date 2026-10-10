@@ -10,6 +10,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from biblioteca import resumo_grupo
 from db import Database, ErroMaratona, ItemLista, Jogo, Maratona, limpar_nome, separar_nomes
 
 log = logging.getLogger("maratonando")
@@ -184,6 +185,7 @@ class AdicionarJogosModal(discord.ui.Modal, title="Colocar jogos na roleta"):
         await interaction.response.send_message(texto, ephemeral=True)
         if adicionados:
             await self.cog.atualizar_painel(self.maratona.id)
+            self.cog.em_segundo_plano(self.cog.completar_com_custo(interaction, self.maratona.id, texto, adicionados))
 
 
 class EscolherDaListaView(discord.ui.View):
@@ -237,6 +239,8 @@ class EscolherDaListaView(discord.ui.View):
         await interaction.response.edit_message(content=texto, view=self)
         if adicionados:
             await self.cog.atualizar_painel(self.maratona.id)
+            self.cog.em_segundo_plano(
+                self.cog.completar_com_custo(interaction, self.maratona.id, texto, adicionados, view=self))
 
     async def escrever(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(AdicionarJogosModal(self.cog, self.maratona))
@@ -395,6 +399,7 @@ class MaratonaCog(commands.Cog):
         self.db: Database = bot.db  # type: ignore[attr-defined]
         self.painel_view = PainelView(self)
         self.girando: set[int] = set()  # maratonas com a roleta girando agora
+        self.tarefas: set[asyncio.Task] = set()
         # Menu de botão direito: clique numa pessoa → Apps → "Reclamou!"
         self.menu_reclamou = app_commands.ContextMenu(
             name="Reclamou!", callback=self._menu_reclamou,
@@ -490,6 +495,35 @@ class MaratonaCog(commands.Cog):
             await interaction.response.send_modal(AdicionarJogosModal(self, m))
             return
         await interaction.response.send_message(view.texto_inicial(), view=view, ephemeral=True)
+
+    def em_segundo_plano(self, coro) -> None:
+        tarefa = asyncio.create_task(coro)
+        self.tarefas.add(tarefa)
+        tarefa.add_done_callback(self.tarefas.discard)
+
+    async def quem_tem(self, maratona_id: int, nome: str):
+        steam = self.bot.get_cog("SteamCog")
+        return await steam.quem_tem(maratona_id, nome) if steam else None
+
+    async def completar_com_custo(self, interaction: discord.Interaction, maratona_id: int, texto: str,
+                                  nomes: list[str], view: Optional[discord.ui.View] = None) -> None:
+        """Depois de confirmar os jogos colocados na roleta, acrescenta quanto cada um custa para o grupo."""
+        linhas = []
+        for nome in nomes:
+            info = await self.quem_tem(maratona_id, nome)
+            if info is not None:
+                opcao, _ = info
+                linhas.append(f"• **{nome}**: {resumo_grupo(opcao, mencoes=False)}")
+        if not linhas:
+            return
+        texto += "\n\n💰 **Para o grupo** (pensem nos amigos 😉):\n" + "\n".join(linhas)
+        try:
+            if view is not None:
+                await interaction.edit_original_response(content=texto[:2000], view=view)
+            else:
+                await interaction.edit_original_response(content=texto[:2000])
+        except discord.HTTPException:
+            pass
 
     async def alternar_jogando(self, interaction: discord.Interaction, m: Maratona) -> None:
         uid = interaction.user.id
@@ -615,13 +649,16 @@ class MaratonaCog(commands.Cog):
 
         self.girando.add(m.id)
         try:
-            await self.animar_roleta(interaction, m, sorteio.jogo, sorteio.numero, sorteio.restantes)
+            # Enquanto a roleta gira, o bot descobre quem tem o jogo (aproveita os segundos da animação).
+            quem_tem = asyncio.create_task(self.quem_tem(m.id, sorteio.jogo.nome))
+            await self.animar_roleta(interaction, m, sorteio.jogo, sorteio.numero, sorteio.restantes, quem_tem)
         finally:
             self.girando.discard(m.id)
         await self.atualizar_painel(m.id)
 
     async def animar_roleta(self, interaction: discord.Interaction, m: Maratona,
-                            jogo: Jogo, numero: int, restantes: int) -> None:
+                            jogo: Jogo, numero: int, restantes: int,
+                            quem_tem: Optional[asyncio.Task] = None) -> None:
         pessoas = [p.user_id for p in self.db.participantes(m.id)]
         pergunta = f"De quem será o jogo **#{numero}**?\n\n"
         anterior = None
@@ -646,6 +683,15 @@ class MaratonaCog(commands.Cog):
             description=f"Jogo **#{numero}** da noite, escolhido por <@{jogo.user_id}>.\n\n"
                         "**Caiu, jogou. Sem reclamar!** 🫡",
         )
+        if quem_tem is not None:
+            try:
+                info = await asyncio.wait_for(quem_tem, timeout=8)
+            except asyncio.TimeoutError:
+                info = None
+            if info is not None:
+                opcao, sem_steam = info
+                revelacao.url = opcao.app.url
+                revelacao.add_field(name="💰 Quem tem", value=resumo_grupo(opcao, sem_steam)[:1024], inline=False)
         revelacao.set_footer(text="A roleta está vazia!" if restantes == 0
                              else f"Ainda {plural(restantes, 'jogo', 'jogos')} na roleta")
         try:

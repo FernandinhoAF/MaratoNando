@@ -16,10 +16,11 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs.maratona import SEM_PING, juntar, plural, tratar_erro
+from marca import COR_DETALHE
 from db import Database, ErroMaratona
 from times import CORES, MAX_TIMES, dividir_em_times
 
-COR_TIMES = discord.Color.from_rgb(52, 152, 219)  # azul
+COR_TIMES = COR_DETALHE  # ciano (Manual da Marca)
 
 
 class TimesView(discord.ui.View):

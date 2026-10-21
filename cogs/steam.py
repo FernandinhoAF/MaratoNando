@@ -25,13 +25,14 @@ from biblioteca import (AppSteam, Opcao, app_da_linha, app_de_detalhes, calcular
 from nomes import ranquear_parecidos, termos_de_busca
 from radar import normalizar
 from cogs.maratona import SEM_PING, juntar, plural, tratar_erro
+from marca import COR_DETALHE
 from db import Database, ErroMaratona, Maratona, agora
 from servicos.steam import PAUSA, ErroSteam, SteamClient
 from servicos.steam_api import ErroSteamAPI, SteamAPI
 
 log = logging.getLogger("maratonando.steam")
 
-COR_STEAM = discord.Color.from_rgb(27, 40, 56)  # azul escuro da Steam
+COR_STEAM = COR_DETALHE  # ciano (Manual da Marca)
 BIBLIOTECA_VALIDA_HORAS = 6   # depois disso, lê a biblioteca de novo (alguém pode ter comprado jogo)
 LOJA_VALIDA_DIAS = 3          # preço/promoção mudam: confere de novo a cada 3 dias
 ANALISAR_POR_VEZ = 60         # jogos novos consultados na loja por /maratona baratos

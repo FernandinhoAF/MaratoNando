@@ -22,6 +22,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from cogs.maratona import juntar, plural, texto_resultado, tratar_erro
+from marca import COR_DETALHE
 from db import Database, ErroMaratona, agora
 from radar import JANELA_DIAS, PRECO_MAX_PADRAO, InfoJogo, Sugestao, eh_jogo, montar_info, ranquear
 from servicos.steam import PAUSA, ErroSteam, SteamClient
@@ -30,7 +31,7 @@ from servicos.twitch import ErroAPI, TwitchClient
 
 log = logging.getLogger("maratonando.radar")
 
-COR_RADAR = discord.Color.from_rgb(145, 70, 255)  # roxo Twitch
+COR_RADAR = COR_DETALHE  # ciano (Manual da Marca)
 INTERVALO_MINUTOS = 10
 LOGIN_TWITCH = re.compile(r"^[a-z0-9_]{3,25}$")
 CACHE_LOJA_SEGUNDOS = 6 * 3600  # a lista da Steam é guardada por 6 horas

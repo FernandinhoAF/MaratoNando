@@ -1,5 +1,7 @@
 # 🎮 MaratoNando
 
+![MaratoNando](assets/export/maratonando-banner-1360x480.png)
+
 Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus jogos na roleta, o bot sorteia, e o jogo que cair é o que todo mundo joga.
 
 **Regra de ouro: caiu, jogou. Sem reclamar.** (E quem reclamar vai pro Mural da Vergonha. 😤)
@@ -43,7 +45,8 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 | `/steam ver` | Mostra quem da maratona tem a Steam vinculada | Qualquer pessoa |
 | `/maratona ajuda` | Explica como funciona | Qualquer pessoa |
 | `/lista adicionar [jogo]` | Guarda um jogo na sua lista pessoal (sem o nome, abre um formulário para vários) | Qualquer pessoa (só ela vê) |
-| `/lista ver` | Mostra sua lista e deixa apagar jogos dela | Qualquer pessoa (só ela vê) |
+| `/lista ver` | Mostra sua lista; dá para tirar vários jogos de uma vez e conferir os nomes na Steam | Qualquer pessoa (só ela vê) |
+| `/lista remover jogo` | Tira um jogo da sua lista (sugere os jogos dela enquanto digita) | Qualquer pessoa (só ela vê) |
 | `/reclamou @pessoa` | Manda alguém pro Mural da Vergonha | Qualquer pessoa |
 | `/sugestao [tipo]` | Sugestões de friendslop só pela Steam: em alta, novidades ou em promoção | Qualquer pessoa |
 | `/sortear-times [quantidade] [jogadores]` | Sorteia times sem ligação com a maratona: marque as pessoas (`@Ana @Bia…`) para sortear na hora, ou deixe vazio para começar com quem está na sua call | Qualquer pessoa (só quem pediu sorteia) |
@@ -123,6 +126,28 @@ python bot.py
 
 Quando aparecer `Logado como MaratoNando...`, está funcionando. Para desligar, aperte `Ctrl + C` no terminal.
 
+## Identidade visual (Manual da Marca)
+
+O visual segue o Manual da Marca v1: o mascote **Nando**, as fontes **Silkscreen** (títulos em pixel) e **JetBrains Mono** (detalhes), e a paleta:
+
+| Cor | Hex | Onde aparece |
+|---|---|---|
+| Magenta | `#FF4FA3` | painel da maratona, lista pessoal, /chamar |
+| Amarelo | `#FFD23F` | roleta e revelação do jogo |
+| Verde | `#45E39A` | resumo final e promoções |
+| Vermelho | `#FF5A4E` | Mural da Vergonha |
+| Ciano | `#3FD8FF` | radar, sugestões, times, Steam e configurações |
+
+- `marca.py` guarda as cores e o link das miniaturas do Nando. Mudou a marca? Muda só ali.
+- `cartoes.py` desenha (com Pillow) o **card da roleta** e o **card do resumo**, que o bot anexa como imagem nos embeds.
+- `assets/nando/` e `assets/fontes/` vão junto para a Discloud; `assets/export/` tem o avatar e o banner para colocar no Developer Portal.
+
+**Avatar e banner do bot:** no [Developer Portal](https://discord.com/developers/applications) → sua aplicação → **Bot**, troque o ícone por `assets/export/maratonando-avatar-1024.png` e o banner por `assets/export/maratonando-banner-1360x480.png`. Salve.
+
+**(Opcional) Nando sorrindo/surpreso no canto dos embeds:** depois de subir o projeto para o GitHub, coloque no `.env` o link "raw" da pasta assets, por exemplo `MARCA_URL=https://raw.githubusercontent.com/SEU_USUARIO/MaratoNando/main/assets`. Sem isso, o canto dos embeds usa o avatar do bot (que também é o Nando).
+
+As fontes são livres (SIL Open Font License); as licenças estão em `assets/fontes/`.
+
 ## Colocando na Discloud
 
 1. **Desligue o bot no seu PC** (`Ctrl + C`). O mesmo bot não pode rodar em dois lugares ao mesmo tempo: os dois responderiam aos comandos e mandariam alertas em dobro.
@@ -155,6 +180,9 @@ MaratoNando/
 ├── times.py           # divisão equilibrada em times
 ├── biblioteca.py      # custo para o grupo: cruza as bibliotecas da Steam
 ├── nomes.py           # nomes parecidos, repetidos e o "você quis dizer…?"
+├── marca.py           # cores e miniaturas do Nando (Manual da Marca)
+├── cartoes.py         # imagens dos cards da roleta e do resumo (Pillow)
+├── assets/            # Nando, fontes e o avatar/banner exportados
 ├── cogs/
 │   ├── maratona.py    # comandos, botões, formulários, roleta e embeds da maratona
 │   ├── radar.py       # /radar, /sugestao e a coleta automática a cada 10 minutos
@@ -176,7 +204,8 @@ MaratoNando/
 │   ├── test_promocoes.py # testes dos avisos de promoção
 │   ├── test_biblioteca.py # testes do custo para o grupo e das contas Steam
 │   ├── test_chamar.py # testes do cargo de jogos e do /chamar
-│   └── test_nomes.py  # testes de nomes digitados com erro e repetidos
+│   ├── test_nomes.py  # testes de nomes digitados com erro e repetidos
+│   └── test_cartoes.py # testes das imagens dos cards
 ├── requirements.txt
 ├── empacotar_discloud.py # monta o .zip para subir na Discloud
 ├── .env.example       # modelo do arquivo de configuração
@@ -187,4 +216,4 @@ A separação é proposital: `db.py` e `radar.py` não sabem nada de Discord nem
 
 ## Tecnologias
 
-Python 3.10+ · [discord.py](https://discordpy.readthedocs.io/) 2.x (comandos de barra, botões persistentes, modais, menus de seleção e de contexto) · SQLite · aiohttp (API Helix da Twitch e loja da Steam) · tarefas em segundo plano (`discord.ext.tasks`) · pytest
+Python 3.10+ · [discord.py](https://discordpy.readthedocs.io/) 2.x (comandos de barra, botões persistentes, modais, menus de seleção e de contexto) · SQLite · aiohttp (API Helix da Twitch e loja da Steam) · tarefas em segundo plano (`discord.ext.tasks`) · Pillow (imagens geradas) · pytest

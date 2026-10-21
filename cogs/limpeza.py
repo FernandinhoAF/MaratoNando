@@ -20,6 +20,8 @@ from typing import Optional
 
 import discord
 from discord import app_commands
+
+from marca import COR_DETALHE
 from discord.ext import commands, tasks
 
 from cogs.maratona import tratar_erro
@@ -27,7 +29,7 @@ from db import Database
 
 log = logging.getLogger("maratonando.limpeza")
 
-COR_CONFIG = discord.Color.from_rgb(149, 165, 166)  # cinza
+COR_CONFIG = COR_DETALHE  # ciano (Manual da Marca)
 
 
 def agora() -> datetime:

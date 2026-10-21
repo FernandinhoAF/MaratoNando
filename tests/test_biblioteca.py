@@ -130,3 +130,14 @@ def test_resumo_grupo():
     assert resumo_grupo(Opcao(peak, [], [ANA])).startswith("❌ Ninguém tem ainda · 🛒 falta para <@1>")
     gratis = app(20, preco=None, gratis=True)
     assert resumo_grupo(Opcao(gratis, [ANA], [BIA])).startswith("🆓 Grátis")
+
+
+def test_rodape_do_card():
+    from biblioteca import Opcao, rodape_card
+    peak = app(10, preco=1487, nome="PEAK")
+    assert rodape_card(Opcao(peak, [ANA, BIA], [])) == "TODO MUNDO JÁ TEM"
+    assert rodape_card(Opcao(peak, [ANA, BIA, CAIO], [DUDA])) == "3 TÊM · FALTA PRA 1 PESSOA: R$ 14,87"
+    assert rodape_card(Opcao(peak, [ANA], [BIA, CAIO])) == "1 TEM · FALTA PRA 2 PESSOAS: R$ 29,74"
+    assert rodape_card(Opcao(peak, [], [ANA])) == "NINGUÉM TEM · FALTA PRA 1 PESSOA: R$ 14,87"
+    assert rodape_card(Opcao(app(20, preco=None, gratis=True), [ANA], [BIA])) == "GRÁTIS NA STEAM"
+    assert rodape_card(Opcao(app(30, preco=None), [ANA], [BIA])) == "1 TEM · SEM PREÇO NO BRASIL"

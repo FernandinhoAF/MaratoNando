@@ -20,9 +20,12 @@ SAIDA = PASTA / "MaratoNando-discloud.zip"
 
 ARQUIVOS = [
     "bot.py", "db.py", "radar.py", "sugestao.py", "times.py", "biblioteca.py", "nomes.py",
-    "requirements.txt", "discloud.config", ".env",
+    "marca.py", "cartoes.py", "requirements.txt", "discloud.config", ".env",
 ]
 PASTAS = ["cogs", "servicos"]  # só os arquivos .py de dentro delas
+# Imagens do Nando e fontes usadas nos cards (Manual da Marca). A pasta assets/export
+# (avatar e banner para o Developer Portal) não vai: o bot não precisa dela para rodar.
+ASSETS = {"assets/nando": "*.png", "assets/fontes": "*.ttf"}
 BANCO = "maratonando.db"
 
 
@@ -37,6 +40,12 @@ def main() -> None:
             z.write(PASTA / nome, nome)
         for pasta in PASTAS:
             for arquivo in sorted((PASTA / pasta).glob("*.py")):
+                z.write(arquivo, f"{pasta}/{arquivo.name}")
+        for pasta, padrao in ASSETS.items():
+            arquivos = sorted((PASTA / pasta).glob(padrao))
+            if not arquivos:
+                sys.exit(f"A pasta {pasta} está vazia ou faltando (o bot precisa dela para os cards).")
+            for arquivo in arquivos:
                 z.write(arquivo, f"{pasta}/{arquivo.name}")
         if com_banco:
             if not (PASTA / BANCO).exists():

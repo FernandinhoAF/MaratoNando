@@ -5,7 +5,7 @@ Como funciona (a cada 6 horas, e uma vez logo que o bot liga):
   2. O bot confere o preço atual de cada jogo, um por vez, com pausa entre eles.
   3. Se um jogo entrou em promoção (ou o desconto aumentou), o bot avisa no canal do bot
      (/config canal-do-bot) de cada servidor onde alguém que tem esse jogo na lista usa o bot.
-     O aviso diz de quem é a lista, sem mandar notificação (nada de DM nem de ping).
+     O aviso marca (com notificação) só quem tem o jogo na lista. Nada de DM.
   4. Quando a promoção acaba, o bot esquece dela; se o jogo entrar em promoção de novo, avisa de novo.
 """
 
@@ -17,14 +17,14 @@ import aiohttp
 import discord
 from discord.ext import commands, tasks
 
-from cogs.maratona import SEM_PING, juntar
+from marca import COR_FIM
 from db import Database
 from radar import escolher_resultado
 from servicos.steam import PAUSA, ErroSteam, SteamClient
 
 log = logging.getLogger("maratonando.promocoes")
 
-COR_PROMO = discord.Color.from_rgb(91, 163, 0)  # verde Steam
+COR_PROMO = COR_FIM  # verde (Manual da Marca)
 INTERVALO_HORAS = 6
 
 
@@ -89,7 +89,7 @@ class PromocoesCog(commands.Cog):
         for appid, tipo in avisos:
             await self.anunciar(appid, tipo)
 
-    def embed_promocao(self, promo, tipo: str, pessoas: list[int]) -> discord.Embed:
+    def embed_promocao(self, promo, tipo: str) -> discord.Embed:
         titulo = "ficou ainda mais barato" if tipo == "maior" else "está em promoção"
         preco = f"**{promo['preco_texto']}** (−{promo['desconto']}%)"
         if promo["original_texto"]:
@@ -99,8 +99,14 @@ class PromocoesCog(commands.Cog):
             url=f"https://store.steampowered.com/app/{promo['appid']}/",
             description=f"{preco}\n\nBoa hora de garantir antes da próxima maratona! 🎮",
         )
-        e.add_field(name="📝 Está na lista de", value=juntar([f"<@{p}>" for p in pessoas]), inline=False)
         return e
+
+    @staticmethod
+    def texto_marcando(pessoas: list[int]) -> str:
+        mencoes = " ".join(f"<@{p}>" for p in pessoas)
+        if len(pessoas) == 1:
+            return f"{mencoes}, um jogo da sua lista entrou em promoção! 💸"
+        return f"{mencoes}, um jogo da lista de vocês entrou em promoção! 💸"
 
     async def anunciar(self, appid: int, tipo: str) -> None:
         promo = self.db.promocao(appid)
@@ -114,8 +120,12 @@ class PromocoesCog(commands.Cog):
             view = discord.ui.View()
             view.add_item(discord.ui.Button(label="Ver na Steam", url=f"https://store.steampowered.com/app/{appid}/"))
             try:
-                await canal.send(embed=self.embed_promocao(promo, tipo, pessoas), view=view,
-                                 allowed_mentions=SEM_PING)
+                # Notifica só as pessoas que têm o jogo na lista (nunca @everyone nem cargos).
+                await canal.send(
+                    self.texto_marcando(pessoas), embed=self.embed_promocao(promo, tipo), view=view,
+                    allowed_mentions=discord.AllowedMentions(
+                        everyone=False, roles=False, users=[discord.Object(id=p) for p in pessoas]),
+                )
             except discord.HTTPException as exc:
                 log.warning("Não consegui avisar a promoção no canal %s: %s", canal_id, exc)
 

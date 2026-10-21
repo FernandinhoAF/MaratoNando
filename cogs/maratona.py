@@ -10,16 +10,15 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from biblioteca import resumo_grupo
-from nomes import ler_escolha, valor_escolha
+import cartoes
+from biblioteca import resumo_grupo, rodape_card
+from marca import ASSINATURA, COR_FIM, COR_PAINEL, COR_ROLETA, COR_VERGONHA, url_nando
+from nomes import ler_escolha, mesmo_jogo, valor_escolha
 from db import Database, ErroMaratona, ItemLista, Jogo, Maratona, limpar_nome, separar_nomes
 
 log = logging.getLogger("maratonando")
 
-COR_PAINEL = discord.Color.from_rgb(124, 77, 255)   # roxo
-COR_ROLETA = discord.Color.from_rgb(255, 196, 0)    # amarelo
-COR_FIM = discord.Color.from_rgb(46, 204, 113)      # verde
-COR_VERGONHA = discord.Color.from_rgb(231, 76, 60)  # vermelho
+# As cores (COR_PAINEL, COR_ROLETA…) vêm do marca.py, seguindo o Manual da Marca.
 
 # Pausas (em segundos) entre os quadros da roleta: vai desacelerando, como uma roleta de verdade.
 TEMPOS_ROLETA = (0.6, 0.8, 1.1, 1.4)
@@ -372,7 +371,8 @@ class MinhaListaView(discord.ui.View):
         itens = self.cog.db.lista(self.user_id)[:25]
         if itens:
             menu = discord.ui.Select(
-                placeholder="Apagar um jogo da lista…",
+                placeholder="🗑️ Tirar jogos da lista (pode marcar vários)…",
+                min_values=1, max_values=len(itens),
                 options=[discord.SelectOption(label=i.nome[:100], value=str(i.id), emoji="🗑️") for i in itens],
             )
             menu.callback = self.remover
@@ -413,10 +413,11 @@ class MinhaListaView(discord.ui.View):
 
     async def remover(self, interaction: discord.Interaction) -> None:
         menu: discord.ui.Select = self.children[0]  # type: ignore[assignment]
-        item = self.cog.db.remover_da_lista(self.user_id, int(menu.values[0]))
+        nomes = [self.cog.db.remover_da_lista(self.user_id, int(v)).nome for v in menu.values]
         self.montar()
-        await interaction.response.edit_message(content=f"🗑️ **{item.nome}** saiu da sua lista.",
-                                                embed=self.embed(), view=self)
+        await interaction.response.edit_message(
+            content="🗑️ Saiu da sua lista: " + ", ".join(f"**{n}**" for n in nomes),
+            embed=self.embed(), view=self)
 
 
 class MeusJogosView(discord.ui.View):
@@ -449,6 +450,7 @@ class MeusJogosView(discord.ui.View):
         linhas = [f"✅ ~~{j.nome}~~ (saiu como #{j.ordem})" if j.jogado else f"🎲 {j.nome}" for j in meus]
         e = discord.Embed(title="📋 Seus jogos nesta maratona", color=COR_PAINEL,
                           description=juntar(linhas, vazio="Você ainda não colocou nenhum jogo.", limite=4000))
+        e.set_thumbnail(url=url_nando(self.cog.bot))
         if self.maratona.limite:
             e.set_footer(text=f"Limite: {self.maratona.limite} jogos por pessoa")
         return e
@@ -546,7 +548,7 @@ class MaratonaCog(commands.Cog):
             descricao = (
                 "Cada um coloca seus jogos na roleta (ninguém vê os dos outros). "
                 "O bot sorteia, e o jogo que cair é o que a gente joga.\n"
-                "**Regra de ouro:** caiu, jogou. Sem reclamar. 🫡\n\n"
+                f"**Regra de ouro:** {ASSINATURA} 🫡\n\n"
                 f"Organização: <@{m.host_id}> · aberta {carimbo(m.criada_em)}"
             )
             if m.limite:
@@ -556,6 +558,9 @@ class MaratonaCog(commands.Cog):
 
         e = discord.Embed(title=f"🎮 {m.nome}", description=descricao,
                           color=COR_PAINEL if m.aberta else discord.Color.dark_grey())
+        e.set_author(name="MARATONA ABERTA" if m.aberta else "MARATONA ENCERRADA",
+                     icon_url=url_nando(self.bot))
+        e.set_thumbnail(url=url_nando(self.bot))
         linhas = [f"<@{p.user_id}> — {plural(p.total, 'jogo', 'jogos')}" for p in participantes]
         linhas += [f"<@{uid}> — entrou sem jogo" for uid in sem_jogo]
         e.add_field(name=f"👥 Jogando ({len(linhas)})",
@@ -875,12 +880,16 @@ class MaratonaCog(commands.Cog):
             "Perdeu o painel no meio do chat? `/maratona painel` traz ele de volta.\n"
             "Quer tirar um jogo seu antes de ser sorteado? **📋 Meus jogos**."
         ))
+        e.set_thumbnail(url=url_nando(self.bot))
+        e.set_footer(text=f"MaratoNando · {ASSINATURA}")
         await interaction.response.send_message(embed=e, ephemeral=True)
 
     # ---- sorteio ---------------------------------------------------
 
     def embed_roleta(self, texto: str) -> discord.Embed:
-        return discord.Embed(title="🎰 Girando a roleta…", description=texto, color=COR_ROLETA)
+        e = discord.Embed(title="🎰 Girando a roleta…", description=texto, color=COR_ROLETA)
+        e.set_thumbnail(url=url_nando(self.bot, "surpreso"))
+        return e
 
     async def sortear(self, interaction: discord.Interaction, m: Maratona) -> None:
         if not self.pode_organizar(interaction, m):
@@ -926,8 +935,9 @@ class MaratonaCog(commands.Cog):
         revelacao = discord.Embed(
             title=f"🎮 {jogo.nome}", color=COR_ROLETA,
             description=f"Jogo **#{numero}** da noite, escolhido por <@{jogo.user_id}>.\n\n"
-                        "**Caiu, jogou. Sem reclamar!** 🫡",
+                        f"**{ASSINATURA[:-1]}!** 🫡",
         )
+        rodape = ""
         if quem_tem is not None:
             try:
                 info = await asyncio.wait_for(quem_tem, timeout=8)
@@ -937,13 +947,40 @@ class MaratonaCog(commands.Cog):
                 opcao, sem_steam = info
                 revelacao.url = opcao.app.url
                 revelacao.add_field(name="💰 Quem tem", value=resumo_grupo(opcao, sem_steam)[:1024], inline=False)
+                rodape = rodape_card(opcao)
         revelacao.set_footer(text="A roleta está vazia!" if restantes == 0
                              else f"Ainda {plural(restantes, 'jogo', 'jogos')} na roleta")
+
+        # O card do manual (imagem). Se der qualquer problema na imagem, o embed sai sem ela.
+        arquivo = None
         try:
-            await interaction.edit_original_response(embed=revelacao)
+            quem = await self.nome_exibido(interaction.guild, jogo.user_id)
+            png = await asyncio.to_thread(cartoes.card_roleta, numero, jogo.nome, quem, rodape, restantes)
+            arquivo = discord.File(png, filename="roleta.png")
+            revelacao.set_image(url="attachment://roleta.png")
+        except Exception:
+            log.exception("Não consegui gerar o card da roleta")
+        anexos = [arquivo] if arquivo else []
+        try:
+            await interaction.edit_original_response(embed=revelacao, attachments=anexos)
         except discord.HTTPException:
             # Se a mensagem da roleta sumiu, o resultado ainda aparece.
-            await interaction.channel.send(embed=revelacao, allowed_mentions=SEM_PING)
+            if arquivo:
+                arquivo.reset()
+            await interaction.channel.send(embed=revelacao, files=anexos, allowed_mentions=SEM_PING)
+
+    async def nome_exibido(self, guild: Optional[discord.Guild], user_id: int) -> str:
+        """O nome que a pessoa usa no servidor (para escrever nas imagens, onde menção não funciona)."""
+        membro = guild.get_member(user_id) if guild else None
+        if membro is None and guild is not None:
+            try:
+                membro = await guild.fetch_member(user_id)
+            except discord.HTTPException:
+                membro = None
+        if membro is not None:
+            return membro.display_name
+        usuario = self.bot.get_user(user_id)
+        return usuario.display_name if usuario else "alguém"
 
     # ---- encerramento ----------------------------------------------
 
@@ -958,8 +995,25 @@ class MaratonaCog(commands.Cog):
     async def encerrar(self, interaction: discord.Interaction, m: Maratona) -> None:
         m = self.db.encerrar(m.id)
         await interaction.response.edit_message(content="🏁 Maratona encerrada!", view=None)
-        await interaction.channel.send(embed=self.embed_resumo(m), allowed_mentions=SEM_PING)
+        e = self.embed_resumo(m)
+        arquivo = await self.card_resumo(interaction.guild, m)
+        if arquivo:
+            e.set_image(url="attachment://resumo.png")
+        await interaction.channel.send(embed=e, files=[arquivo] if arquivo else [], allowed_mentions=SEM_PING)
         await self.atualizar_painel(m.id)
+
+    async def card_resumo(self, guild: Optional[discord.Guild], m: Maratona) -> Optional[discord.File]:
+        """A imagem "tabela de recordes" do fim da maratona (Manual da Marca, pág. 7)."""
+        try:
+            jogados = sorted((j for j in self.db.jogos(m.id) if j.jogado), key=lambda j: j.ordem)
+            jogos = [(j.nome, await self.nome_exibido(guild, j.user_id)) for j in jogados]
+            mural = [(await self.nome_exibido(guild, uid), n) for uid, n in self.db.mural(m.id)]
+            cabecalho = f"{plural(len(jogados), 'JOGO', 'JOGOS')} · {duracao(m.criada_em, m.encerrada_em).upper()}"
+            png = await asyncio.to_thread(cartoes.card_resumo, m.nome, jogos, cabecalho, mural)
+            return discord.File(png, filename="resumo.png")
+        except Exception:
+            log.exception("Não consegui gerar o card do resumo")
+            return None
 
     def embed_resumo(self, m: Maratona) -> discord.Embed:
         jogos = self.db.jogos(m.id)
@@ -998,6 +1052,24 @@ class MaratonaCog(commands.Cog):
     async def _autocompletar_lista(self, interaction: discord.Interaction, atual: str):
         return await autocompletar_jogo(self.bot, interaction, atual)
 
+    @lista.command(name="remover", description="Tira um jogo da sua lista.")
+    @app_commands.describe(jogo="Comece a digitar e escolha um jogo da sua lista")
+    async def cmd_lista_remover(self, interaction: discord.Interaction, jogo: str) -> None:
+        itens = self.db.lista(interaction.user.id)
+        alvo = next((i for i in itens if str(i.id) == jogo), None)  # escolhido do autocompletar
+        if alvo is None:  # digitou o nome em vez de escolher
+            alvo = next((i for i in itens if mesmo_jogo(i.nome, jogo)), None)
+        if alvo is None:
+            raise ErroMaratona(f"Não achei **{jogo}** na sua lista. Use `/lista ver` para ver o que tem nela.")
+        self.db.remover_da_lista(interaction.user.id, alvo.id)
+        await interaction.response.send_message(f"🗑️ **{alvo.nome}** saiu da sua lista.", ephemeral=True)
+
+    @cmd_lista_remover.autocomplete("jogo")
+    async def _autocompletar_remover(self, interaction: discord.Interaction, atual: str):
+        return [app_commands.Choice(name=i.nome[:100], value=str(i.id))
+                for i in self.db.lista(interaction.user.id)
+                if atual.casefold().strip() in i.nome.casefold()][:25]
+
     @lista.command(name="ver", description="Mostra (só para você) os jogos da sua lista.")
     async def cmd_lista_ver(self, interaction: discord.Interaction) -> None:
         view = MinhaListaView(self, interaction.user.id)
@@ -1031,7 +1103,10 @@ class MaratonaCog(commands.Cog):
             texto = f"📢 {interaction.user.mention} dedurou {pessoa.mention} por reclamar{de_que}!"
         texto += f"\n😤 {pessoa.mention} agora tem **{plural(total, 'reclamação', 'reclamações')}** no Mural da Vergonha."
 
-        await interaction.response.send_message(texto, allowed_mentions=SEM_PING)
+        e = discord.Embed(title="😤 Mural da Vergonha", description=texto, color=COR_VERGONHA)
+        e.set_thumbnail(url=url_nando(self.bot, "surpreso"))
+        e.set_footer(text=ASSINATURA)
+        await interaction.response.send_message(embed=e, allowed_mentions=SEM_PING)
         await self.atualizar_painel(m.id)
 
 

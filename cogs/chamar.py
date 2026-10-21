@@ -18,6 +18,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from marca import COR_PAINEL
+
 from biblioteca import reais, resumo_grupo
 from cogs.maratona import SEM_PING, autocompletar_jogo, mencao_do_cargo, tratar_erro
 from nomes import ler_escolha
@@ -25,7 +27,7 @@ from db import Database, ErroMaratona, limpar_nome
 
 log = logging.getLogger("maratonando.chamar")
 
-COR_CHAMADO = discord.Color.from_rgb(230, 126, 34)  # laranja
+COR_CHAMADO = COR_PAINEL  # magenta (Manual da Marca)
 BOTOES = {
     "bora": ("Bora", "✋", discord.ButtonStyle.success),
     "depois": ("Daqui a pouco", "⏰", discord.ButtonStyle.secondary),

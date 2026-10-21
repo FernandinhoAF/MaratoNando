@@ -188,3 +188,15 @@ def resumo_grupo(o: Opcao, sem_steam: list[int] = (), mencoes: bool = True) -> s
 
 def plural_pessoas(n: int) -> str:
     return f"{n} pessoa" if n == 1 else f"{n} pessoas"
+
+
+def rodape_card(o: Opcao) -> str:
+    """A linha curta de "quem tem" que vai no rodapé do card da roleta (sem menções, em maiúsculas)."""
+    if o.todos_tem:
+        return "TODO MUNDO JÁ TEM"
+    if o.app.gratis:
+        return "GRÁTIS NA STEAM"
+    tem = f"{len(o.donos)} {'TEM' if len(o.donos) == 1 else 'TÊM'}" if o.donos else "NINGUÉM TEM"
+    if o.app.preco_centavos is None:
+        return f"{tem} · SEM PREÇO NO BRASIL"
+    return f"{tem} · FALTA PRA {plural_pessoas(len(o.faltam)).upper()}: {reais(o.custo)}"

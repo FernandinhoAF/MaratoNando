@@ -12,6 +12,7 @@ from discord.ext import commands
 
 import cartoes
 from biblioteca import resumo_grupo, rodape_card
+import agenda
 import estatisticas
 from marca import ASSINATURA, COR_DETALHE, COR_FIM, COR_PAINEL, COR_ROLETA, COR_VERGONHA, url_nando
 from nomes import ler_escolha, mesmo_jogo, valor_escolha
@@ -629,6 +630,12 @@ class MaratonaCog(commands.Cog):
         msg = await interaction.original_response()
         self.db.definir_painel(m.id, msg.channel.id, msg.id)
 
+    async def enviar_painel_no_canal(self, canal: discord.abc.Messageable, m: Maratona, texto: Optional[str] = None,
+                                     mencoes: discord.AllowedMentions = SEM_PING) -> None:
+        """Igual ao enviar_painel, mas sem ninguém ter clicado em nada (ex.: maratona agendada que abriu sozinha)."""
+        msg = await canal.send(texto, embed=self.embed_painel(m), view=self.painel_view, allowed_mentions=mencoes)
+        self.db.definir_painel(m.id, msg.channel.id, msg.id)
+
     async def abrir_adicionar(self, interaction: discord.Interaction, m: Maratona) -> None:
         """Botão "Adicionar jogos": mostra a lista salva (se tiver) ou abre direto o formulário."""
         view = EscolherDaListaView(self, m, interaction.user.id)
@@ -829,6 +836,31 @@ class MaratonaCog(commands.Cog):
         if aviso:
             await interaction.followup.send(f"A maratona foi aberta{aviso}.", ephemeral=True)
 
+    @maratona.command(name="agendar", description="Marca a maratona para depois: botão de presença, evento e aviso antes.")
+    @app_commands.describe(dia="hoje, amanhã, um dia da semana (sábado) ou a data (25/10)",
+                           hora="Horário de Brasília: 21h, 21:30 ou 21h30",
+                           nome="Nome da maratona (opcional)",
+                           call="Canal de voz onde vai ser (opcional; aparece no evento do calendário)")
+    @app_commands.guild_only()
+    async def cmd_agendar(self, interaction: discord.Interaction, dia: str, hora: str,
+                          nome: Optional[app_commands.Range[str, 1, 60]] = None,
+                          call: Optional[discord.VoiceChannel] = None) -> None:
+        agenda_cog = self.bot.get_cog("AgendaCog")
+        if agenda_cog is None:
+            raise ErroMaratona("A parte de agendamento do bot não está ligada.")
+        await agenda_cog.agendar(interaction, dia, hora, nome, call)
+
+    @cmd_agendar.autocomplete("dia")
+    async def _autocompletar_dia(self, interaction: discord.Interaction, atual: str):
+        opcoes = agenda.sugestoes_de_dia(datetime.now(timezone.utc), atual)
+        return [app_commands.Choice(name=texto, value=valor) for texto, valor in opcoes][:25]
+
+    @cmd_agendar.autocomplete("hora")
+    async def _autocompletar_hora(self, interaction: discord.Interaction, atual: str):
+        horas = ["19:00", "19:30", "20:00", "20:30", "21:00", "21:30", "22:00", "22:30", "23:00"]
+        filtradas = [h for h in horas if h.startswith(atual.strip())] or ([atual.strip()] if atual.strip() else horas)
+        return [app_commands.Choice(name=h, value=h) for h in filtradas][:25]
+
     @maratona.command(name="painel", description="Traz o painel da maratona para o fim do chat.")
     async def cmd_painel(self, interaction: discord.Interaction) -> None:
         m = self.exigir_aberta(interaction)
@@ -896,7 +928,7 @@ class MaratonaCog(commands.Cog):
     @maratona.command(name="ajuda", description="Explica como a maratona funciona.")
     async def cmd_ajuda(self, interaction: discord.Interaction) -> None:
         e = discord.Embed(title="🎮 Como funciona a maratona", color=COR_PAINEL, description=(
-            "**1.** Alguém abre a maratona com `/maratona criar`.\n"
+            "**1.** Alguém abre a maratona com `/maratona criar` (ou marca para depois com `/maratona agendar`).\n"
             "**2.** Cada um clica em **➕ Adicionar jogos** e escreve seus jogos, um por linha "
             "(ou usa `/maratona adicionar`, que sugere o nome certinho enquanto digita). "
             "Os jogos ficam secretos até serem sorteados.\n"

@@ -96,7 +96,8 @@ class LimpezaCog(commands.Cog):
         for message_id, channel_id, guild_id in self.db.mensagens_vencidas(agora()):
             # O painel de uma maratona que ainda está rolando não pode sumir.
             m = self.db.maratona_por_painel(message_id)
-            if m is not None and m.aberta:
+            ag = self.db.agendamento_por_mensagem(message_id)  # e nem o convite de uma maratona agendada
+            if (m is not None and m.aberta) or (ag is not None and ag.status == "marcado"):
                 _, minutos = self.db.limpeza_config(guild_id)
                 self.db.adiar_apagar(message_id, agora() + timedelta(minutes=minutos or 10))
                 continue

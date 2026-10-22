@@ -249,6 +249,30 @@ CREATE TABLE IF NOT EXISTS catalogo (
     nome  TEXT NOT NULL
 );
 
+-- Maratonas marcadas para depois (/maratona agendar).
+CREATE TABLE IF NOT EXISTS agendamentos (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id   INTEGER NOT NULL,
+    channel_id INTEGER NOT NULL,
+    message_id INTEGER,                          -- mensagem com os botões "Eu vou / Talvez / Não vou"
+    host_id    INTEGER NOT NULL,
+    nome       TEXT    NOT NULL,
+    inicio     TEXT    NOT NULL,                 -- quando começa (ISO, UTC)
+    evento_id  INTEGER,                          -- evento no calendário do servidor (se o bot conseguiu criar)
+    status     TEXT    NOT NULL DEFAULT 'marcado', -- 'marcado', 'aberto', 'cancelado' ou 'perdido'
+    criado_em  TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agendamentos_status ON agendamentos (status, inicio);
+
+CREATE TABLE IF NOT EXISTS agendamento_respostas (
+    agendamento_id INTEGER NOT NULL REFERENCES agendamentos (id) ON DELETE CASCADE,
+    user_id        INTEGER NOT NULL,
+    resposta       TEXT    NOT NULL,  -- 'vou', 'talvez' ou 'nao'
+    respondido_em  TEXT    NOT NULL,
+    PRIMARY KEY (agendamento_id, user_id)
+);
+
 -- Nota (1 a 5) que cada pessoa deu para cada jogo jogado numa maratona.
 -- Uma nota por pessoa por jogo: clicar de novo troca a nota.
 CREATE TABLE IF NOT EXISTS notas (
@@ -320,6 +344,20 @@ class Jogo:
     @property
     def jogado(self) -> bool:
         return self.ordem is not None
+
+
+@dataclass(frozen=True)
+class Agendamento:
+    id: int
+    guild_id: int
+    channel_id: int
+    message_id: int | None
+    host_id: int
+    nome: str
+    inicio: str
+    evento_id: int | None
+    status: str
+    criado_em: str
 
 
 @dataclass(frozen=True)
@@ -789,6 +827,69 @@ class Database:
             (guild_id,),
         ).fetchall()
         return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+    # ---- agendamentos ----------------------------------------------
+
+    def criar_agendamento(self, guild_id: int, channel_id: int, host_id: int, nome: str, inicio: str) -> Agendamento:
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO agendamentos (guild_id, channel_id, host_id, nome, inicio, criado_em)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (guild_id, channel_id, host_id, nome, inicio, agora()),
+            )
+        return self.agendamento(cur.lastrowid)
+
+    def agendamento(self, agendamento_id: int) -> Agendamento | None:
+        row = self.conn.execute("SELECT * FROM agendamentos WHERE id = ?", (agendamento_id,)).fetchone()
+        return Agendamento(**row) if row else None
+
+    def agendamento_por_mensagem(self, message_id: int) -> Agendamento | None:
+        row = self.conn.execute("SELECT * FROM agendamentos WHERE message_id = ?", (message_id,)).fetchone()
+        return Agendamento(**row) if row else None
+
+    def definir_mensagem_agendamento(self, agendamento_id: int, message_id: int,
+                                     evento_id: int | None = None) -> None:
+        with self.conn:
+            self.conn.execute("UPDATE agendamentos SET message_id = ?, evento_id = ? WHERE id = ?",
+                              (message_id, evento_id, agendamento_id))
+
+    def responder_agendamento(self, agendamento_id: int, user_id: int, resposta: str) -> None:
+        if resposta not in ("vou", "talvez", "nao"):
+            raise ValueError(resposta)
+        ag = self.agendamento(agendamento_id)
+        if ag is None or ag.status != "marcado":
+            raise ErroMaratona("Esse agendamento não está mais valendo (já começou ou foi cancelado).")
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO agendamento_respostas (agendamento_id, user_id, resposta, respondido_em)"
+                " VALUES (?, ?, ?, ?) ON CONFLICT (agendamento_id, user_id)"
+                " DO UPDATE SET resposta = excluded.resposta, respondido_em = excluded.respondido_em",
+                (agendamento_id, user_id, resposta, agora()),
+            )
+
+    def respostas_agendamento(self, agendamento_id: int) -> dict[str, list[int]]:
+        """{"vou": [...], "talvez": [...], "nao": [...]} na ordem em que responderam."""
+        saida: dict[str, list[int]] = {"vou": [], "talvez": [], "nao": []}
+        for r in self.conn.execute(
+            "SELECT user_id, resposta FROM agendamento_respostas WHERE agendamento_id = ? ORDER BY respondido_em",
+            (agendamento_id,),
+        ):
+            saida[r["resposta"]].append(r["user_id"])
+        return saida
+
+    def agendamentos_vencendo(self, limite_iso: str) -> list[Agendamento]:
+        """Agendamentos ainda marcados que começam até `limite_iso` (hora de abrir a maratona)."""
+        rows = self.conn.execute(
+            "SELECT * FROM agendamentos WHERE status = 'marcado' AND inicio <= ? ORDER BY inicio", (limite_iso,)
+        ).fetchall()
+        return [Agendamento(**r) for r in rows]
+
+    def mudar_status_agendamento(self, agendamento_id: int, status: str, de: str = "marcado") -> bool:
+        """Muda o status só se ainda estiver em `de`. False se alguém já mudou antes (evita abrir duas vezes)."""
+        with self.conn:
+            cur = self.conn.execute("UPDATE agendamentos SET status = ? WHERE id = ? AND status = ?",
+                                    (status, agendamento_id, de))
+        return cur.rowcount == 1
 
     # ---- estatísticas do grupo --------------------------------------
 

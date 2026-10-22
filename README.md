@@ -24,6 +24,7 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 - **📣 Chamar o pessoal**: com o cargo de jogos configurado (`/config cargo-jogos`), o bot marca o cargo quando alguém abre uma maratona. E o `/chamar [jogo] [pessoas]` posta um chamado marcando o cargo: cada um responde com um clique (✋ Bora · ⏰ Daqui a pouco · ❌ Hoje não), e quando bate o número de pessoas o bot marca só quem confirmou ("Fechou o grupo!"). Com a Steam ligada, mostra quem dos confirmados tem o jogo (ou, sem jogo escolhido, os mais baratos para eles). O cargo é marcado no máximo uma vez a cada 30 minutos.
 - **✍️ Nomes digitados de qualquer jeito**: o `/maratona adicionar`, o `/lista adicionar` e o `/chamar` sugerem jogos da Steam enquanto você digita. No formulário de "Adicionar jogos", nomes que não batem com nenhum jogo viram um "você quis dizer…?" (ex.: "letal compani" → **Lethal Company**), e quem quiser pode manter como escreveu (jogos de fora da Steam). Jogos reconhecidos ficam com o nome oficial, e a roleta barra repetidos escritos de outro jeito ("R.E.P.O." = "repo").
 - **Mural da Vergonha**: `/reclamou @pessoa`, ou botão direito na pessoa → Apps → **Reclamou!**
+- **📅 Maratona agendada** (`/maratona agendar dia hora`): marca a maratona para depois ("sábado" + "21h30", "amanhã", "25/10"…; o dia tem sugestões enquanto digita). O bot posta um convite com **✅ Eu vou · 🤔 Talvez · ❌ Não vou**, coloca no **calendário do servidor** (evento do Discord) e, **15 minutos antes**, abre a maratona sozinho no canal, já com quem confirmou dentro, marcando o cargo de jogos e quem disse "Eu vou". Quem marcou pode cancelar (o evento some do calendário também). Se já tiver uma maratona aberta na hora, o bot só avisa.
 - **⭐ Nota dos jogos**: quando o próximo jogo é sorteado (ou a maratona acaba), o bot posta botões de 1 a 5 para avaliar o jogo que acabou de ser jogado. Só quem estava na maratona vota, e dá para trocar a nota clicando de novo. O `/ranking` junta as notas de todas as maratonas e mostra os jogos favoritos do grupo (o mesmo jogo jogado em noites diferentes conta como um só).
 - **📊 Estatísticas do grupo** (`/stats`): quantas maratonas, quantos jogos e quantas horas de jogatina o grupo já teve, os jogos que mais saíram na roleta, quem mais coloca jogo (e quantos saíram), o favorito do grupo, o Mural da Vergonha de todos os tempos e um gráfico de maratonas por mês.
 - **Resumo final**: o que foi jogado, em que ordem, quem escolheu, a nota de cada jogo, o melhor da noite, o que ficou na roleta e o ranking de reclamações.
@@ -35,6 +36,7 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 | Comando | O que faz | Quem pode |
 |---|---|---|
 | `/maratona criar [nome] [limite] [avisar]` | Abre uma maratona no canal e posta o painel (marca o cargo de jogos, a não ser que `avisar` seja Não) | Qualquer pessoa |
+| `/maratona agendar dia hora [nome] [call]` | Marca a maratona para depois: convite com botões de presença, evento no calendário do servidor e abertura automática 15 min antes | Qualquer pessoa (cancelar: quem marcou ou quem tem *Gerenciar servidor*) |
 | `/chamar [jogo] [pessoas]` | Chama o pessoal para jogar, marcando o cargo de jogos | Qualquer pessoa |
 | `/maratona adicionar jogo` | Coloca um jogo na roleta, com sugestões da Steam enquanto digita | Qualquer pessoa |
 | `/maratona sortear` | Gira a roleta (o mesmo que o botão 🎲) | Quem organizou ou quem tem *Gerenciar servidor* |
@@ -152,6 +154,10 @@ O visual segue o Manual da Marca v1: o mascote **Nando**, as fontes **Silkscreen
 
 As fontes são livres (SIL Open Font License); as licenças estão em `assets/fontes/`.
 
+## Permissão para o calendário (opcional)
+
+Para o `/maratona agendar` colocar a maratona no **calendário do servidor**, o bot precisa da permissão **Gerenciar eventos**. Sem ela, o agendamento funciona igual (convite, botões e abertura automática), só não aparece no calendário. Para dar a permissão: **Configurações do servidor → Cargos →** o cargo do bot (MaratoNando) **→ Permissões →** ligue **Gerenciar eventos** (em inglês, *Manage Events*; em algumas versões aparece também como *Criar eventos*) e salve.
+
 ## Colocando na Discloud
 
 1. **Desligue o bot no seu PC** (`Ctrl + C`). O mesmo bot não pode rodar em dois lugares ao mesmo tempo: os dois responderiam aos comandos e mandariam alertas em dobro.
@@ -184,6 +190,7 @@ MaratoNando/
 ├── times.py           # divisão equilibrada em times
 ├── biblioteca.py      # custo para o grupo: cruza as bibliotecas da Steam
 ├── nomes.py           # nomes parecidos, repetidos e o "você quis dizer…?"
+├── agenda.py          # datas digitadas ("sábado" + "21h30") para o /maratona agendar
 ├── estatisticas.py    # contas do /stats: horas, mais sorteados, quem mais coloca jogo, por mês
 ├── notas.py           # notas dos jogos: médias, estrelas e o ranking dos favoritos
 ├── marca.py           # cores e miniaturas do Nando (Manual da Marca)
@@ -196,7 +203,8 @@ MaratoNando/
 │   ├── limpeza.py     # /config e a faxina das mensagens fora do canal do bot
 │   ├── promocoes.py   # vigia de promoções dos jogos das listas
 │   ├── steam.py       # /steam e o /maratona baratos
-│   └── chamar.py      # /chamar
+│   ├── chamar.py      # /chamar
+│   └── agenda.py      # /maratona agendar: convite, evento do calendário e abertura automática
 ├── servicos/
 │   ├── twitch.py      # cliente da API oficial da Twitch
 │   ├── steam.py       # consultas à loja da Steam
@@ -211,6 +219,7 @@ MaratoNando/
 │   ├── test_biblioteca.py # testes do custo para o grupo e das contas Steam
 │   ├── test_chamar.py # testes do cargo de jogos e do /chamar
 │   ├── test_nomes.py  # testes de nomes digitados com erro e repetidos
+│   ├── test_agenda.py # testes das datas e dos agendamentos
 │   ├── test_estatisticas.py # testes do /stats
 │   ├── test_notas.py  # testes das notas e do ranking
 │   └── test_cartoes.py # testes das imagens dos cards

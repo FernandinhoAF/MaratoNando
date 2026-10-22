@@ -178,6 +178,7 @@ Para o `/maratona agendar` colocar a maratona no **calendário do servidor**, o 
 2. Monte o zip com o script da pasta:
    - **Primeira vez:** `python empacotar_discloud.py --com-banco` (leva o banco de dados, com tudo que você já configurou).
    - **Atualizações:** `python empacotar_discloud.py` (sem o banco, para não apagar o que está rodando lá).
+   - **Atalho para atualizar:** dois cliques no `atualizar_e_empacotar.bat`. Ele baixa a versão mais nova do GitHub (`git pull`) e já monta o zip sem o banco.
 3. Na [Discloud](https://discloud.com), vá em **Dashboard → + Upload → Upload ZIP** e envie o `MaratoNando-discloud.zip` (na primeira vez) ou use a opção de atualizar (commit) do app, nas próximas.
 
 O `discloud.config` já está pronto (`RAM=128`). O zip já leva o `.env` com os tokens; ele **nunca** vai para o GitHub (está no `.gitignore`, assim como o zip).

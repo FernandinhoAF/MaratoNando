@@ -303,6 +303,8 @@ MIGRACOES = [
     ("limpeza_config", "ultimo_ping_cargo", "TEXT"),     # quando o bot marcou esse cargo pela última vez
     ("jogos", "appid", "INTEGER"),                       # jogo da Steam (quando o bot reconheceu)
     ("jogos", "nota_pedida_em", "TEXT"),                 # quando o bot postou os botões de nota deste jogo
+    ("maratonas", "modo", "TEXT NOT NULL DEFAULT 'livre'"),  # modo da roleta (modos.py)
+    ("maratonas", "modo_preco", "INTEGER"),              # preço máximo do modo "ate_preco", em centavos
 ]
 
 MINUTOS_ENTRE_PINGS = 30  # o cargo é marcado no máximo uma vez a cada 30 minutos
@@ -335,6 +337,8 @@ class Maratona:
     status: str
     criada_em: str
     encerrada_em: str | None
+    modo: str = "livre"            # modo da roleta (veja modos.py)
+    modo_preco: int | None = None  # preço máximo do modo "ate_preco", em centavos
 
     @property
     def aberta(self) -> bool:
@@ -643,8 +647,18 @@ class Database:
         ).fetchone()
         return Jogo(**row) if row else None
 
-    def sortear(self, maratona_id: int) -> Sorteio | None:
+    def definir_modo(self, maratona_id: int, modo: str, preco_centavos: int | None) -> Maratona:
+        self._exigir_aberta(maratona_id)
+        with self.conn:
+            self.conn.execute("UPDATE maratonas SET modo = ?, modo_preco = ? WHERE id = ?",
+                              (modo, preco_centavos, maratona_id))
+        return self.maratona(maratona_id)
+
+    def sortear(self, maratona_id: int, permitidos: set[int] | None = None) -> Sorteio | None:
         """Escolhe ao acaso um jogo que ainda está na roleta. None se a roleta estiver vazia.
+
+        permitidos: se vier, só esses jogos (ids) podem sair (modos da roleta). Os outros continuam
+        na roleta. "restantes" conta todos os que sobraram, valendo no modo ou não.
 
         O resultado é gravado ANTES de qualquer animação no Discord, então um
         sorteio nunca se perde (nem se repete) se o bot cair no meio.
@@ -653,9 +667,10 @@ class Database:
         pendentes = self.conn.execute(
             "SELECT * FROM jogos WHERE maratona_id = ? AND ordem IS NULL", (maratona_id,)
         ).fetchall()
-        if not pendentes:
+        candidatos = [p for p in pendentes if permitidos is None or p["id"] in permitidos]
+        if not candidatos:
             return None
-        escolhido = Jogo(**_rng.choice(pendentes))
+        escolhido = Jogo(**_rng.choice(candidatos))
         with self.conn:
             numero = self.conn.execute(
                 "SELECT COALESCE(MAX(ordem), 0) + 1 FROM jogos WHERE maratona_id = ?", (maratona_id,)

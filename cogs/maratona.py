@@ -13,6 +13,7 @@ from discord.ext import commands
 import cartoes
 from biblioteca import resumo_grupo, rodape_card
 import agenda
+import modos
 import estatisticas
 from marca import ASSINATURA, COR_DETALHE, COR_FIM, COR_PAINEL, COR_ROLETA, COR_VERGONHA, url_nando
 from nomes import ler_escolha, mesmo_jogo, valor_escolha
@@ -26,9 +27,15 @@ log = logging.getLogger("maratonando")
 
 # Pausas (em segundos) entre os quadros da roleta: vai desacelerando, como uma roleta de verdade.
 TEMPOS_ROLETA = (0.6, 0.8, 1.1, 1.4)
+TEMPO_MAX_MODO = 45  # segundos para conferir na Steam os jogos da roleta (modos); o que passar disso fica de fora
 SUSPENSE_FINAL = 1.6
 
 MEDALHAS = ("🥇", "🥈", "🥉")
+ESCOLHAS_MODO = [
+    app_commands.Choice(name="🎲 Livre (qualquer jogo)", value="livre"),
+    app_commands.Choice(name="✅ Ninguém precisa comprar (todo mundo tem ou é grátis)", value="todos_tem"),
+    app_commands.Choice(name="💸 Só até R$ X (preencha o preço)", value="ate_preco"),
+]
 SEM_PING = discord.AllowedMentions.none()  # menciona o nome sem notificar ninguém
 
 
@@ -587,6 +594,8 @@ class MaratonaCog(commands.Cog):
             )
             if m.limite:
                 descricao += f"\nLimite: **{m.limite}** jogos por pessoa"
+            if m.modo != "livre":
+                descricao += f"\n🎯 Modo da roleta: **{modos.descricao(m.modo, m.modo_preco)}**"
         else:
             descricao = f"🏁 **Maratona encerrada** {carimbo(m.encerrada_em)}. Valeu, galera!"
 
@@ -813,17 +822,26 @@ class MaratonaCog(commands.Cog):
     @maratona.command(name="criar", description="Abre uma nova maratona de jogos neste canal.")
     @app_commands.describe(nome="Nome da maratona (opcional)",
                            limite="Máximo de jogos por pessoa (opcional; sem limite se ficar vazio)",
-                           avisar="Marcar o cargo de jogos? (padrão: sim, se o cargo estiver configurado)")
+                           avisar="Marcar o cargo de jogos? (padrão: sim, se o cargo estiver configurado)",
+                           modo="Quais jogos podem sair no sorteio (padrão: livre). Dá para mudar depois.",
+                           preco="Só no modo \"só até R$ X\": o preço máximo, em reais")
+    @app_commands.choices(modo=ESCOLHAS_MODO)
     async def cmd_criar(self, interaction: discord.Interaction,
                         nome: Optional[app_commands.Range[str, 1, 60]] = None,
                         limite: Optional[app_commands.Range[int, 1, 25]] = None,
-                        avisar: bool = True) -> None:
+                        avisar: bool = True,
+                        modo: Optional[app_commands.Choice[str]] = None,
+                        preco: Optional[app_commands.Range[int, 1, 500]] = None) -> None:
+        modo_valor = modo.value if modo else "livre"
+        preco_centavos = self.validar_modo(modo_valor, preco)
         aberta = self.db.maratona_aberta(interaction.guild_id)
         if aberta:
             raise ErroMaratona(f"Já tem uma maratona aberta em <#{aberta.channel_id}>. "
                                "Encerre ela antes (ou use `/maratona painel` para achar o painel).")
         m = self.db.criar_maratona(interaction.guild_id, interaction.channel_id, interaction.user.id,
                                    nome or "Maratona de Jogos", limite)
+        if modo_valor != "livre":
+            m = self.db.definir_modo(m.id, modo_valor, preco_centavos)
         if avisar:
             mencao, permissao, aviso = mencao_do_cargo(self.db, interaction.guild_id)
         else:
@@ -860,6 +878,38 @@ class MaratonaCog(commands.Cog):
         horas = ["19:00", "19:30", "20:00", "20:30", "21:00", "21:30", "22:00", "22:30", "23:00"]
         filtradas = [h for h in horas if h.startswith(atual.strip())] or ([atual.strip()] if atual.strip() else horas)
         return [app_commands.Choice(name=h, value=h) for h in filtradas][:25]
+
+    def validar_modo(self, modo: str, preco: Optional[int]) -> Optional[int]:
+        try:
+            centavos = modos.validar(modo, preco)
+        except ValueError as erro:
+            raise ErroMaratona(str(erro)) from None
+        steam = self.bot.get_cog("SteamCog")
+        if modo != "livre" and (steam is None or steam.api is None):
+            raise ErroMaratona("Esse modo precisa da Steam (para saber quem tem cada jogo), mas a chave da Steam "
+                               "não está configurada no bot.")
+        return centavos
+
+    @maratona.command(name="modo", description="Muda quais jogos podem sair no sorteio (ex.: só os que todo mundo tem).")
+    @app_commands.describe(modo="Quais jogos podem sair no sorteio",
+                           preco="Só no modo \"só até R$ X\": o preço máximo, em reais")
+    @app_commands.choices(modo=ESCOLHAS_MODO)
+    async def cmd_modo(self, interaction: discord.Interaction, modo: app_commands.Choice[str],
+                       preco: Optional[app_commands.Range[int, 1, 500]] = None) -> None:
+        m = self.exigir_aberta(interaction)
+        if not self.pode_organizar(interaction, m):
+            raise ErroMaratona(f"Só quem organizou (<@{m.host_id}>) pode mudar o modo da roleta.")
+        centavos = self.validar_modo(modo.value, preco)
+        m = self.db.definir_modo(m.id, modo.value, centavos)
+        explicacao = {
+            "livre": "Qualquer jogo da roleta pode sair.",
+            "todos_tem": "Só saem jogos que todo mundo (com Steam vinculada) já tem, ou que são grátis.",
+            "ate_preco": "Só saem jogos que custam até esse valor para quem ainda não tem.",
+        }[modo.value]
+        await interaction.response.send_message(
+            f"🎯 Modo da roleta: **{modos.descricao(m.modo, m.modo_preco)}**\n{explicacao} "
+            "Os outros jogos continuam na roleta e voltam a valer se o modo mudar.", allowed_mentions=SEM_PING)
+        await self.atualizar_painel(m.id)
 
     @maratona.command(name="painel", description="Traz o painel da maratona para o fim do chat.")
     async def cmd_painel(self, interaction: discord.Interaction) -> None:
@@ -941,7 +991,8 @@ class MaratonaCog(commands.Cog):
             "dos favoritos do grupo.\n"
             "**6.** No fim, **🏁 Encerrar** mostra o resumo da noite.\n\n"
             "Chegou no meio? Clique em **🙋 Tô jogando** no painel.\n"
-            "Não querem gastar? `/maratona baratos` mostra o que sai mais barato para o grupo.\n"
+            "Não querem gastar? `/maratona baratos` mostra o que sai mais barato para o grupo, e "
+            "`/maratona modo` faz a roleta sortear só jogos que todo mundo tem (ou até um preço).\n"
             "Jogo em equipe? `/times` sorteia os times.\n"
             "Sem ideia de jogo? `/sugestao` e `/radar ver` dão sugestões.\n"
             "Curioso com os números do grupo? `/stats` mostra as estatísticas de todas as maratonas.\n\n"
@@ -964,16 +1015,39 @@ class MaratonaCog(commands.Cog):
             raise ErroMaratona(f"Só quem organizou (<@{m.host_id}>) pode sortear.")
         if m.id in self.girando:
             raise ErroMaratona("Calma, a roleta já está girando! 🎰")
-
-        sorteio = self.db.sortear(m.id)  # o resultado fica gravado antes da animação
-        if sorteio is None:
+        restantes, jogados = self.db.contagem(m.id)
+        if restantes == 0:
             raise ErroMaratona("A roleta está vazia! Coloquem mais jogos ou encerrem a maratona. 🏁")
 
         self.girando.add(m.id)
         try:
-            # Enquanto a roleta gira, o bot descobre quem tem o jogo (aproveita os segundos da animação).
-            quem_tem = asyncio.create_task(self.quem_tem(m.id, sorteio.jogo.nome, sorteio.jogo.appid))
-            await self.animar_roleta(interaction, m, sorteio.jogo, sorteio.numero, sorteio.restantes, quem_tem)
+            pergunta = f"De quem será o jogo **#{jogados + 1}**?\n\n"
+            await interaction.response.send_message(embed=self.embed_roleta(pergunta + "➡️ …"),
+                                                    allowed_mentions=SEM_PING)
+            permitidos, conferidos, aviso_modo = None, {}, ""
+            if m.modo != "livre":
+                # Modo ligado: confere quem tem cada jogo ANTES de sortear (a roleta já está na tela).
+                await interaction.edit_original_response(embed=self.embed_roleta(
+                    pergunta + f"🔎 Conferindo na Steam quais jogos valem no modo **{modos.descricao(m.modo, m.modo_preco)}**…"))
+                permitidos, conferidos, aviso_modo = await self.filtrar_pelo_modo(m)
+                if not permitidos:
+                    await interaction.edit_original_response(embed=discord.Embed(
+                        title="🎯 Nenhum jogo da roleta vale nesse modo", color=COR_VERGONHA,
+                        description=f"Modo: **{modos.descricao(m.modo, m.modo_preco)}**\n{aviso_modo}\n\n"
+                                    "Coloquem jogos que passem no modo, ou quem organizou muda o modo com "
+                                    "`/maratona modo`."))
+                    return
+            sorteio = self.db.sortear(m.id, permitidos)  # o resultado fica gravado antes do fim da animação
+            if sorteio is None:
+                await interaction.edit_original_response(embed=self.embed_roleta("A roleta ficou vazia! 🏁"))
+                return
+            # Enquanto a roleta gira, o bot descobre quem tem o jogo (se o modo já não descobriu).
+            if sorteio.jogo.id in conferidos:
+                quem_tem = asyncio.create_task(asyncio.sleep(0, result=conferidos[sorteio.jogo.id]))
+            else:
+                quem_tem = asyncio.create_task(self.quem_tem(m.id, sorteio.jogo.nome, sorteio.jogo.appid))
+            await self.animar_roleta(interaction, m, sorteio.jogo, sorteio.numero, sorteio.restantes, quem_tem,
+                                     aviso_modo)
         finally:
             self.girando.discard(m.id)
         await self.atualizar_painel(m.id)
@@ -982,15 +1056,45 @@ class MaratonaCog(commands.Cog):
         if anterior is not None:
             await self.pedir_notas(interaction.channel, anterior, proximo=sorteio.jogo.nome)
 
+    async def filtrar_pelo_modo(self, m: Maratona) -> tuple[set[int], dict, str]:
+        """(ids dos jogos que podem sair, {id: quem tem} do que foi conferido, aviso sobre os que ficaram de fora)."""
+        pendentes = [j for j in self.db.jogos(m.id) if not j.jogado]
+        conferidos: dict[int, object] = {}
+        permitidos: set[int] = set()
+        nao_conferidos = 0
+        limite = asyncio.get_running_loop().time() + TEMPO_MAX_MODO
+        for j in pendentes:
+            info = None
+            falta = limite - asyncio.get_running_loop().time()
+            if falta > 0:
+                try:
+                    info = await asyncio.wait_for(self.quem_tem(m.id, j.nome, j.appid), timeout=falta)
+                except asyncio.TimeoutError:
+                    info = None
+            if info is None:
+                nao_conferidos += 1
+            else:
+                conferidos[j.id] = info
+            if modos.passa(m.modo, m.modo_preco, info[0] if info else None):
+                permitidos.add(j.id)
+        nao_passam = len(pendentes) - len(permitidos) - nao_conferidos
+        partes = []
+        if nao_passam:
+            partes.append(f"{plural(nao_passam, 'jogo não passa', 'jogos não passam')} no modo")
+        if nao_conferidos:
+            partes.append(f"{plural(nao_conferidos, 'jogo não deu', 'jogos não deram')} para conferir na Steam")
+        if partes:
+            partes[-1] += " (continuam na roleta)"
+        return permitidos, conferidos, (" · ".join(partes) + ".") if partes else ""
+
     async def animar_roleta(self, interaction: discord.Interaction, m: Maratona,
                             jogo: Jogo, numero: int, restantes: int,
-                            quem_tem: Optional[asyncio.Task] = None) -> None:
+                            quem_tem: Optional[asyncio.Task] = None, aviso_modo: str = "") -> None:
+        """Continua a animação (a primeira tela já foi mandada pelo sortear) e revela o jogo."""
         pessoas = [p.user_id for p in self.db.participantes(m.id)]
         pergunta = f"De quem será o jogo **#{numero}**?\n\n"
         anterior = None
 
-        await interaction.response.send_message(embed=self.embed_roleta(pergunta + "➡️ …"),
-                                                allowed_mentions=SEM_PING)
         try:
             for pausa in TEMPOS_ROLETA:
                 await asyncio.sleep(pausa)
@@ -1009,6 +1113,10 @@ class MaratonaCog(commands.Cog):
             description=f"Jogo **#{numero}** da noite, escolhido por <@{jogo.user_id}>.\n\n"
                         f"**{ASSINATURA[:-1]}!** 🫡",
         )
+        if m.modo != "livre":
+            revelacao.add_field(name="🎯 Modo da roleta",
+                                value=f"{modos.descricao(m.modo, m.modo_preco)}\n{aviso_modo}".strip()[:1024],
+                                inline=False)
         rodape = ""
         if quem_tem is not None:
             try:

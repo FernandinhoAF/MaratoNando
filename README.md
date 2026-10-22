@@ -21,6 +21,7 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 - **🧹 Chat limpo**: com `/config canal-do-bot`, o bot ganha um canal próprio onde as mensagens ficam. Em qualquer outro canal, as mensagens dele somem sozinhas depois de alguns minutos (padrão: 10). Se alguém estiver usando os botões de uma mensagem, o prazo recomeça; e o painel de uma maratona aberta só some depois que ela acaba.
 - **💸 Avisos de promoção**: a cada 6 horas o bot confere na Steam o preço dos jogos que estão nas listas pessoais. Quando um deles entra em promoção (ou o desconto aumenta), ele avisa no canal do bot marcando (com notificação) só quem tem aquele jogo na lista. O `/lista ver` também mostra quais jogos da sua lista estão em promoção.
 - **💰 Mais barato para o grupo** (`/maratona baratos`): cada pessoa vincula a Steam (ou um admin vincula por ela), e o bot cruza as bibliotecas de quem está jogando a maratona. Mostra os jogos multiplayer do mais barato para o grupo ao mais caro: o custo é o preço atual × quantas pessoas ainda não têm. Primeiro aparecem os que todo mundo já tem e os grátis. O mesmo cálculo aparece **no sorteio** ("✅ 3 têm · 🛒 falta para @Bia, R$ 14,87") e, só para quem está colocando, **ao colocar um jogo na roleta**, para todo mundo pensar no bolso dos amigos.
+- **🎯 Modos da roleta** (`/maratona modo`, ou o `modo` do `/maratona criar`): quem organizou escolhe quais jogos podem sair no sorteio. **✅ Ninguém precisa comprar**: só saem jogos que todo mundo (com Steam vinculada) já tem, ou que são grátis. **💸 Só até R$ X**: só saem jogos que custam até esse valor para quem ainda não tem. **🎲 Livre**: qualquer jogo (o normal). Com um modo ligado, a roleta aparece na hora e o bot confere na Steam, enquanto ela gira, quais jogos valem; os que não valem continuam na roleta e voltam a valer se o modo mudar. Jogos que não dá para conferir na Steam (de fora da Steam, sem preço no Brasil) ficam de fora, para ninguém ser pego de surpresa pagando. O painel e a revelação mostram o modo e quantos jogos ficaram de fora.
 - **🙋 Chegou no meio?** O botão **Tô jogando** do painel coloca a pessoa na maratona mesmo sem jogo na roleta, e ela passa a contar nos times e no `/maratona baratos`.
 - **📣 Chamar o pessoal**: com o cargo de jogos configurado (`/config cargo-jogos`), o bot marca o cargo quando alguém abre uma maratona. E o `/chamar [jogo] [pessoas]` posta um chamado marcando o cargo: cada um responde com um clique (✋ Bora · ⏰ Daqui a pouco · ❌ Hoje não), e quando bate o número de pessoas o bot marca só quem confirmou ("Fechou o grupo!"). Com a Steam ligada, mostra quem dos confirmados tem o jogo (ou, sem jogo escolhido, os mais baratos para eles). O cargo é marcado no máximo uma vez a cada 30 minutos.
 - **✍️ Nomes digitados de qualquer jeito**: o `/maratona adicionar`, o `/lista adicionar` e o `/chamar` sugerem jogos da Steam enquanto você digita. No formulário de "Adicionar jogos", nomes que não batem com nenhum jogo viram um "você quis dizer…?" (ex.: "letal compani" → **Lethal Company**), e quem quiser pode manter como escreveu (jogos de fora da Steam). Jogos reconhecidos ficam com o nome oficial, e a roleta barra repetidos escritos de outro jeito ("R.E.P.O." = "repo").
@@ -36,7 +37,8 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 
 | Comando | O que faz | Quem pode |
 |---|---|---|
-| `/maratona criar [nome] [limite] [avisar]` | Abre uma maratona no canal e posta o painel (marca o cargo de jogos, a não ser que `avisar` seja Não) | Qualquer pessoa |
+| `/maratona criar [nome] [limite] [avisar] [modo] [preco]` | Abre uma maratona no canal e posta o painel (marca o cargo de jogos, a não ser que `avisar` seja Não; `modo` escolhe quais jogos podem sair) | Qualquer pessoa |
+| `/maratona modo modo [preco]` | Muda o modo da roleta: livre, ninguém precisa comprar, ou só até R$ X | Quem organizou ou quem tem *Gerenciar servidor* |
 | `/maratona agendar dia hora [nome] [call]` | Marca a maratona para depois: convite com botões de presença, evento no calendário do servidor e abertura automática 15 min antes | Qualquer pessoa (cancelar: quem marcou ou quem tem *Gerenciar servidor*) |
 | `/chamar [jogo] [pessoas]` | Chama o pessoal para jogar, marcando o cargo de jogos | Qualquer pessoa |
 | `/maratona adicionar jogo` | Coloca um jogo na roleta, com sugestões da Steam enquanto digita | Qualquer pessoa |
@@ -193,6 +195,7 @@ MaratoNando/
 ├── times.py           # divisão equilibrada em times
 ├── biblioteca.py      # custo para o grupo: cruza as bibliotecas da Steam
 ├── nomes.py           # nomes parecidos, repetidos e o "você quis dizer…?"
+├── modos.py           # modos da roleta: quais jogos podem sair no sorteio
 ├── jogadores.py       # quantas pessoas cada jogo aceita, lido da descrição da Steam
 ├── agenda.py          # datas digitadas ("sábado" + "21h30") para o /maratona agendar
 ├── estatisticas.py    # contas do /stats: horas, mais sorteados, quem mais coloca jogo, por mês
@@ -224,6 +227,7 @@ MaratoNando/
 │   ├── test_biblioteca.py # testes do custo para o grupo e das contas Steam
 │   ├── test_chamar.py # testes do cargo de jogos e do /chamar
 │   ├── test_nomes.py  # testes de nomes digitados com erro e repetidos
+│   ├── test_modos.py  # testes dos modos da roleta
 │   ├── test_jogadores.py # testes da leitura do nº de jogadores (com textos reais da Steam)
 │   ├── test_agenda.py # testes das datas e dos agendamentos
 │   ├── test_estatisticas.py # testes do /stats

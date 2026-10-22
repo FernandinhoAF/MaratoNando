@@ -319,6 +319,9 @@ MIGRACOES = [
     ("jogos", "appid", "INTEGER"),                       # jogo da Steam (quando o bot reconheceu)
     ("jogos", "nota_pedida_em", "TEXT"),                 # quando o bot postou os botões de nota deste jogo
     ("limpeza_config", "avisar_gratis", "INTEGER NOT NULL DEFAULT 1"),  # avisar jogos grátis (Epic/Steam)
+    ("chamados", "inicio", "TEXT"),                      # horário marcado no /chamar (ISO, UTC); NULL = agora
+    ("chamados", "lembrado", "INTEGER NOT NULL DEFAULT 0"),  # já avisou "hora de jogar"?
+    ("chamado_respostas", "ordem", "INTEGER"),           # ordem dos cliques (decide a fila de espera)
     ("maratonas", "modo", "TEXT NOT NULL DEFAULT 'livre'"),  # modo da roleta (modos.py)
     ("maratonas", "modo_preco", "INTEGER"),              # preço máximo do modo "ate_preco", em centavos
 ]
@@ -1494,12 +1497,13 @@ class Database:
     # ---- /chamar ---------------------------------------------------
 
     def criar_chamado(self, guild_id: int, channel_id: int, autor_id: int,
-                      jogo: str | None, pessoas: int | None) -> int:
+                      jogo: str | None, pessoas: int | None, inicio: str | None = None) -> int:
+        """pessoas = número de vagas (quem passar disso vai para a fila); inicio = horário marcado (ISO UTC)."""
         with self.conn:
             cur = self.conn.execute(
-                "INSERT INTO chamados (guild_id, channel_id, autor_id, jogo, pessoas, criado_em)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (guild_id, channel_id, autor_id, jogo, pessoas, agora()),
+                "INSERT INTO chamados (guild_id, channel_id, autor_id, jogo, pessoas, inicio, criado_em)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (guild_id, channel_id, autor_id, jogo, pessoas, inicio, agora()),
             )
         self.responder_chamado(cur.lastrowid, autor_id, "bora")  # quem chamou já está dentro
         return cur.lastrowid
@@ -1511,22 +1515,31 @@ class Database:
     def chamado(self, chamado_id: int) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM chamados WHERE id = ?", (chamado_id,)).fetchone()
 
-    def responder_chamado(self, chamado_id: int, user_id: int, resposta: str) -> None:
+    def responder_chamado(self, chamado_id: int, user_id: int, resposta: str) -> bool:
+        """Grava a resposta. False se a pessoa clicou de novo na mesma (aí nada muda, nem o lugar na fila)."""
         if resposta not in ("bora", "depois", "nao"):
             raise ValueError(resposta)
+        atual = self.conn.execute("SELECT resposta FROM chamado_respostas WHERE chamado_id = ? AND user_id = ?",
+                                  (chamado_id, user_id)).fetchone()
+        if atual is not None and atual[0] == resposta:
+            return False
         with self.conn:
+            ordem = self.conn.execute("SELECT COALESCE(MAX(ordem), 0) + 1 FROM chamado_respostas WHERE chamado_id = ?",
+                                      (chamado_id,)).fetchone()[0]
             self.conn.execute(
-                "INSERT INTO chamado_respostas (chamado_id, user_id, resposta, respondido_em) VALUES (?, ?, ?, ?)"
-                " ON CONFLICT (chamado_id, user_id) DO UPDATE SET resposta = excluded.resposta,"
-                " respondido_em = excluded.respondido_em",
-                (chamado_id, user_id, resposta, agora()),
+                "INSERT INTO chamado_respostas (chamado_id, user_id, resposta, respondido_em, ordem)"
+                " VALUES (?, ?, ?, ?, ?) ON CONFLICT (chamado_id, user_id) DO UPDATE SET"
+                " resposta = excluded.resposta, respondido_em = excluded.respondido_em, ordem = excluded.ordem",
+                (chamado_id, user_id, resposta, agora(), ordem),
             )
+        return True
 
     def respostas_chamado(self, chamado_id: int) -> dict[str, list[int]]:
         """{'bora': [...], 'depois': [...], 'nao': [...]} na ordem em que responderam."""
         saida: dict[str, list[int]] = {"bora": [], "depois": [], "nao": []}
         for r in self.conn.execute(
-                "SELECT user_id, resposta FROM chamado_respostas WHERE chamado_id = ? ORDER BY respondido_em, rowid",
+                "SELECT user_id, resposta FROM chamado_respostas WHERE chamado_id = ?"
+                " ORDER BY COALESCE(ordem, 0), respondido_em, rowid",
                 (chamado_id,)):
             saida[r["resposta"]].append(r["user_id"])
         return saida
@@ -1541,6 +1554,20 @@ class Database:
     def encerrar_chamado(self, chamado_id: int) -> None:
         with self.conn:
             self.conn.execute("UPDATE chamados SET encerrado = 1 WHERE id = ?", (chamado_id,))
+
+    def chamados_para_lembrar(self, agora_iso: str) -> list[sqlite3.Row]:
+        """Chamados com horário marcado que já chegou e ainda não tiveram o "hora de jogar"."""
+        return self.conn.execute(
+            "SELECT * FROM chamados WHERE inicio IS NOT NULL AND inicio <= ? AND lembrado = 0 AND encerrado = 0",
+            (agora_iso,)).fetchall()
+
+    def marcar_chamado_lembrado(self, chamado_id: int) -> bool:
+        with self.conn:
+            cur = self.conn.execute("UPDATE chamados SET lembrado = 1 WHERE id = ? AND lembrado = 0", (chamado_id,))
+        return cur.rowcount == 1
+
+    def chamado_por_mensagem(self, message_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM chamados WHERE message_id = ?", (message_id,)).fetchone()
 
     # ---- catálogo de nomes -----------------------------------------
 

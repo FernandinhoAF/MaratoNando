@@ -1,8 +1,12 @@
-"""/chamar: chama o pessoal para jogar, marcando o cargo de jogos.
+"""/chamar (ou /bora): chama o pessoal para jogar, marcando o cargo de jogos.
 
-  • /chamar [jogo] [pessoas]  posta o chamado marcando o cargo (/config cargo-jogos).
+  • /chamar [jogo] [pessoas] [hora] [marcar_cargo]  posta o chamado (marca o cargo de /config cargo-jogos,
+    a não ser que marcar_cargo seja Não).
   • Cada um responde com um clique: ✋ Bora · ⏰ Daqui a pouco · ❌ Hoje não.
-  • Com "pessoas", quando o número de "Bora" bate, o bot marca só quem confirmou: "Fechou!".
+  • "pessoas" = vagas. Os primeiros que clicam Bora estão dentro; quando lota, o bot marca só quem está
+    dentro ("Fechou!") e quem clica depois vai para a fila de espera. Se alguém de dentro sai, o primeiro
+    da fila sobe e é avisado.
+  • Com "hora" (ex.: 21h), o chamado mostra o horário e, na hora, o bot avisa quem está dentro.
   • Se a Steam estiver ligada, mostra quem dos confirmados tem o jogo e quanto custa para quem não tem.
     Sem jogo escolhido, sugere os jogos mais baratos para quem topou.
 
@@ -12,11 +16,15 @@ então continuam funcionando mesmo se o bot reiniciar.
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
+
+import agenda
+from vagas import dividir, ganharam_vaga, posicao_na_fila
 
 from marca import COR_PAINEL
 
@@ -73,6 +81,14 @@ class ChamarCog(commands.Cog):
 
     async def cog_load(self) -> None:
         self.bot.add_dynamic_items(BotaoChamado)
+        self.despertador.start()
+
+    async def cog_unload(self) -> None:
+        self.despertador.cancel()
+
+    def dentro_e_fila(self, chamado_id: int) -> tuple[list[int], list[int]]:
+        c = self.db.chamado(chamado_id)
+        return dividir(self.db.respostas_chamado(chamado_id)["bora"], c["pessoas"])
 
     async def cog_app_command_error(self, interaction, erro) -> None:
         await tratar_erro(interaction, erro)
@@ -86,15 +102,25 @@ class ChamarCog(commands.Cog):
         if c["encerrado"]:
             titulo = f"🔒 {titulo} (encerrado)"
 
-        def linha(emoji: str, nome: str, ids: list[int]) -> str:
-            return f"{emoji} **{nome} ({len(ids)})**: " + (" ".join(f"<@{u}>" for u in ids) if ids else "—")
+        def linha(emoji: str, nome: str, ids: list[int], contagem: Optional[str] = None) -> str:
+            return f"{emoji} **{nome} ({contagem or len(ids)})**: " + (" ".join(f"<@{u}>" for u in ids) if ids else "—")
 
-        partes = [linha("✋", "Bora", r["bora"]), linha("⏰", "Daqui a pouco", r["depois"]),
-                  linha("❌", "Hoje não", r["nao"])]
+        dentro, fila = dividir(r["bora"], c["pessoas"])
+        partes = []
+        if c["inicio"]:
+            ts = int(datetime.fromisoformat(c["inicio"]).timestamp())
+            partes.append(f"🕘 **Começa <t:{ts}:t>** (<t:{ts}:R>)\n")
         if c["pessoas"]:
-            faltam = c["pessoas"] - len(r["bora"])
-            partes.append(f"\n✅ **Fechou!** {len(r['bora'])}/{c['pessoas']} pessoas" if faltam <= 0
-                          else f"\nFaltam **{faltam}** para fechar {c['pessoas']} pessoas")
+            partes.append(linha("✋", "Dentro", dentro, f"{len(dentro)}/{c['pessoas']}"))
+            if fila:
+                partes.append(linha("⏳", "Fila de espera", fila))
+        else:
+            partes.append(linha("✋", "Bora", dentro))
+        partes += [linha("⏰", "Daqui a pouco", r["depois"]), linha("❌", "Hoje não", r["nao"])]
+        if c["pessoas"]:
+            faltam = c["pessoas"] - len(dentro)
+            partes.append(f"\n✅ **Fechou!** {len(dentro)}/{c['pessoas']} · quem clicar Bora agora entra na fila"
+                          if faltam <= 0 else f"\nFaltam **{faltam}** para fechar {c['pessoas']} vagas")
         e = discord.Embed(title=titulo, description="\n".join(partes),
                           color=discord.Color.dark_grey() if c["encerrado"] else COR_CHAMADO)
         if chamado_id in self.info_steam:
@@ -108,7 +134,7 @@ class ChamarCog(commands.Cog):
         c = self.db.chamado(chamado_id)
         if steam is None or c is None or c["message_id"] is None:
             return
-        bora = self.db.respostas_chamado(chamado_id)["bora"]
+        bora, _ = self.dentro_e_fila(chamado_id)
         if c["jogo"]:
             info = await steam.quem_tem_para(bora, c["jogo"])
             texto = resumo_grupo(*info) if info else None
@@ -138,13 +164,46 @@ class ChamarCog(commands.Cog):
 
     # ---- comando ----------------------------------------------------
 
-    @app_commands.command(name="chamar", description="Chama o pessoal para jogar (marca o cargo de jogos).")
+    @app_commands.command(name="chamar", description="Chama o pessoal para jogar (com vagas, fila e horário).")
     @app_commands.describe(jogo="Qual jogo (deixe vazio para \"bora jogar alguma coisa?\")",
-                           pessoas="Quantas pessoas fecham o grupo (opcional)")
+                           pessoas="Vagas: quantas pessoas cabem (quem chegar depois vai para a fila)",
+                           hora="Horário de Brasília, se não for agora (ex.: 21h ou 21:30)",
+                           marcar_cargo="Marcar o cargo de jogos? (padrão: sim)")
     @app_commands.guild_only()
     async def cmd_chamar(self, interaction: discord.Interaction,
                          jogo: Optional[app_commands.Range[str, 1, 100]] = None,
-                         pessoas: Optional[app_commands.Range[int, 2, 20]] = None) -> None:
+                         pessoas: Optional[app_commands.Range[int, 2, 20]] = None,
+                         hora: Optional[app_commands.Range[str, 1, 10]] = None,
+                         marcar_cargo: bool = True) -> None:
+        await self.chamar(interaction, jogo, pessoas, hora, marcar_cargo)
+
+    @app_commands.command(name="bora", description="Atalho do /chamar: chama o pessoal para jogar.")
+    @app_commands.describe(jogo="Qual jogo (deixe vazio para \"bora jogar alguma coisa?\")",
+                           pessoas="Vagas: quantas pessoas cabem (quem chegar depois vai para a fila)",
+                           hora="Horário de Brasília, se não for agora (ex.: 21h ou 21:30)",
+                           marcar_cargo="Marcar o cargo de jogos? (padrão: sim)")
+    @app_commands.guild_only()
+    async def cmd_bora(self, interaction: discord.Interaction,
+                       jogo: Optional[app_commands.Range[str, 1, 100]] = None,
+                       pessoas: Optional[app_commands.Range[int, 2, 20]] = None,
+                       hora: Optional[app_commands.Range[str, 1, 10]] = None,
+                       marcar_cargo: bool = True) -> None:
+        await self.chamar(interaction, jogo, pessoas, hora, marcar_cargo)
+
+    @staticmethod
+    def horario(hora: str) -> datetime:
+        """"21h" → hoje às 21h; se esse horário de hoje já passou, amanhã."""
+        agora = datetime.now(timezone.utc)
+        try:
+            return agenda.quando("hoje", hora, agora)
+        except agenda.ErroData as erro:
+            if "já passou" not in str(erro):
+                raise ErroMaratona(str(erro)) from None
+        return agenda.quando("amanhã", hora, agora)
+
+    async def chamar(self, interaction: discord.Interaction, jogo: Optional[str], pessoas: Optional[int],
+                     hora: Optional[str], marcar_cargo: bool) -> None:
+        inicio = self.horario(hora) if hora else None
         appid = None
         if jogo:
             jogo, appid = ler_escolha(jogo)
@@ -152,11 +211,16 @@ class ChamarCog(commands.Cog):
             steam = self.bot.get_cog("SteamCog")
             if appid and steam is not None:  # escolhido do autocompletar: o bot já sabe qual jogo é
                 steam.lembrar_nome(jogo, appid, jogo)
-        chamado_id = self.db.criar_chamado(interaction.guild_id, interaction.channel_id, interaction.user.id,
-                                           jogo or None, pessoas)
-        mencao, permissao, aviso = mencao_do_cargo(self.db, interaction.guild_id)
+        chamado_id = self.db.criar_chamado(
+            interaction.guild_id, interaction.channel_id, interaction.user.id, jogo or None, pessoas,
+            inicio.astimezone(timezone.utc).isoformat(timespec="seconds") if inicio else None)
+        if marcar_cargo:
+            mencao, permissao, aviso = mencao_do_cargo(self.db, interaction.guild_id)
+        else:
+            mencao, permissao, aviso = "", SEM_PING, ""
         quem = getattr(interaction.user, "display_name", interaction.user.name)
-        texto = f"{mencao}📣 **{quem} quer jogar{f' {jogo}' if jogo else ''}!**"
+        quando = f" às <t:{int(inicio.timestamp())}:t>" if inicio else ""
+        texto = f"{mencao}📣 **{quem} quer jogar{f' {jogo}' if jogo else ''}{quando}!**"
         await interaction.response.send_message(texto, embed=self.embed(chamado_id), view=view_chamado(chamado_id),
                                                 allowed_mentions=permissao)
         msg = await interaction.original_response()
@@ -167,6 +231,10 @@ class ChamarCog(commands.Cog):
 
     @cmd_chamar.autocomplete("jogo")
     async def _autocompletar(self, interaction: discord.Interaction, atual: str):
+        return await autocompletar_jogo(self.bot, interaction, atual)
+
+    @cmd_bora.autocomplete("jogo")
+    async def _autocompletar_bora(self, interaction: discord.Interaction, atual: str):
         return await autocompletar_jogo(self.bot, interaction, atual)
 
     # ---- respostas --------------------------------------------------
@@ -185,10 +253,23 @@ class ChamarCog(commands.Cog):
                                                     allowed_mentions=SEM_PING)
             return
 
+        antes, _ = self.dentro_e_fila(chamado_id)
         self.db.responder_chamado(chamado_id, interaction.user.id, acao)
         await interaction.response.edit_message(embed=self.embed(chamado_id), allowed_mentions=SEM_PING)
+        bora, fila = self.dentro_e_fila(chamado_id)
 
-        bora = self.db.respostas_chamado(chamado_id)["bora"]
+        posicao = posicao_na_fila(fila, interaction.user.id)
+        if posicao:
+            await interaction.followup.send(
+                f"Lotou! 😅 Você está na **fila de espera** (posição {posicao}). Se alguém sair, você entra "
+                "e o bot te avisa.", ephemeral=True)
+        subiram = ganharam_vaga(antes, bora, interaction.user.id)
+        if subiram and c["fechou_em"]:
+            await interaction.followup.send(
+                " ".join(f"<@{u}>" for u in subiram) + " 🎟️ abriu uma vaga e você saiu da fila: **tá dentro!**",
+                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False,
+                                                         users=[discord.Object(id=u) for u in subiram]),
+            )
         if c["pessoas"] and len(bora) >= c["pessoas"] and self.db.marcar_chamado_fechado(chamado_id):
             # Fechou o grupo: marca (com notificação) só quem confirmou.
             jogo = f" de {c['jogo']}" if c["jogo"] else ""
@@ -199,6 +280,33 @@ class ChamarCog(commands.Cog):
             )
         # Quem entrou ou saiu do "Bora" muda a conta da Steam: recalcula em segundo plano.
         self.em_segundo_plano(self.calcular_steam(chamado_id))
+
+
+    # ---- "hora de jogar" (chamados com horário) -----------------------
+
+    @tasks.loop(seconds=30)
+    async def despertador(self) -> None:
+        agora = datetime.now(timezone.utc)
+        for c in self.db.chamados_para_lembrar(agora.isoformat(timespec="seconds")):
+            if not self.db.marcar_chamado_lembrado(c["id"]):
+                continue
+            if agora - datetime.fromisoformat(c["inicio"]) > timedelta(hours=1):
+                continue  # o bot estava desligado na hora: avisar muito depois só atrapalha
+            dentro, _ = self.dentro_e_fila(c["id"])
+            if not dentro:
+                continue
+            jogo = f" {c['jogo']}" if c["jogo"] else ""
+            canal = self.bot.get_partial_messageable(c["channel_id"], guild_id=c["guild_id"])
+            try:
+                await canal.send(" ".join(f"<@{u}>" for u in dentro) + f"\n⏰ **Hora de jogar{jogo}!** Entrem na call! 🎧",
+                                 allowed_mentions=discord.AllowedMentions(
+                                     everyone=False, roles=False, users=[discord.Object(id=u) for u in dentro]))
+            except discord.HTTPException as exc:
+                log.warning("Não consegui avisar a hora do chamado %s: %s", c["id"], exc)
+
+    @despertador.before_loop
+    async def antes_do_despertador(self) -> None:
+        await self.bot.wait_until_ready()
 
 
 async def setup(bot: commands.Bot) -> None:

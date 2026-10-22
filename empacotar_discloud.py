@@ -20,7 +20,7 @@ SAIDA = PASTA / "MaratoNando-discloud.zip"
 
 ARQUIVOS = [
     "bot.py", "db.py", "radar.py", "sugestao.py", "times.py", "biblioteca.py", "nomes.py",
-    "marca.py", "cartoes.py", "notas.py", "estatisticas.py", "agenda.py", "jogadores.py", "modos.py", "ficha.py", "gratis.py", "desejos.py", "requirements.txt", "discloud.config", ".env",
+    "marca.py", "cartoes.py", "notas.py", "estatisticas.py", "agenda.py", "jogadores.py", "modos.py", "ficha.py", "gratis.py", "desejos.py", "vagas.py", "requirements.txt", "discloud.config", ".env",
 ]
 PASTAS = ["cogs", "servicos"]  # só os arquivos .py de dentro delas
 # Imagens do Nando e fontes usadas nos cards (Manual da Marca). A pasta assets/export

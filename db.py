@@ -855,6 +855,23 @@ class Database:
         ).fetchall()
         return [(r[0], r[1], r[2], r[3]) for r in rows]
 
+    # ---- ficha do jogo (/jogo ver) --------------------------------------
+
+    def usuarios_com_steam(self, guild_id: int) -> list[int]:
+        """Quem usa o bot neste servidor e tem a Steam vinculada."""
+        rows = self.conn.execute(
+            "SELECT c.user_id FROM steam_contas c JOIN usuarios_servidores u ON u.user_id = c.user_id"
+            " WHERE u.guild_id = ? ORDER BY c.user_id", (guild_id,)).fetchall()
+        return [r[0] for r in rows]
+
+    def na_lista_de(self, guild_id: int, appid: int) -> list[int]:
+        """Quem deste servidor tem esse jogo da Steam na lista pessoal."""
+        rows = self.conn.execute(
+            "SELECT DISTINCT l.user_id FROM lista_pessoal l JOIN steam_nomes s ON s.chave = l.chave"
+            " JOIN usuarios_servidores u ON u.user_id = l.user_id AND u.guild_id = ?"
+            " WHERE s.appid = ? ORDER BY l.user_id", (guild_id, appid)).fetchall()
+        return [r[0] for r in rows]
+
     # ---- número de jogadores ----------------------------------------
 
     def salvar_jogadores_steam(self, appid: int, faixa: tuple[int, int] | None) -> None:

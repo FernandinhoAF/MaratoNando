@@ -41,8 +41,9 @@ class SteamClient:
         dados = await self._json(URL_BUSCA, {"term": nome, "l": "english", "cc": self.pais})
         return dados.get("items", [])
 
-    async def detalhes(self, appid: int) -> dict | None:
-        dados = await self._json(URL_DETALHES, {"appids": str(appid), "cc": self.pais, "l": "english"})
+    async def detalhes(self, appid: int, idioma: str = "english") -> dict | None:
+        """idioma "english" (padrão, para ler o nº de jogadores) ou "brazilian" (textos da ficha em português)."""
+        dados = await self._json(URL_DETALHES, {"appids": str(appid), "cc": self.pais, "l": idioma})
         bloco = dados.get(str(appid)) or {}
         return bloco.get("data") if bloco.get("success") else None
 

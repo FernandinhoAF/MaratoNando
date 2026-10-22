@@ -19,8 +19,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import ficha
 from biblioteca import Opcao, app_da_linha, calcular_opcoes, escolher_candidatos, reais
-from cogs.maratona import SEM_PING, autocompletar_jogo, juntar, plural, tratar_erro
+from cogs.maratona import SEM_PING, autocompletar_jogo, juntar, plural, texto_resultado, tratar_erro
+from notas import estrelas, numero
 from db import Database, ErroMaratona
 from jogadores import cabe, faixa_texto
 from marca import COR_DETALHE, url_nando
@@ -49,6 +51,44 @@ def custo_texto(o: Opcao) -> str:
         return "🆓 grátis"
     tem = f"{len(o.donos)} {'tem' if len(o.donos) == 1 else 'têm'}" if o.donos else "ninguém tem"
     return f"{tem} · 🛒 {reais(o.custo)} para o resto"
+
+
+class FichaView(discord.ui.View):
+    """Botões da ficha: salvar na lista, colocar na roleta (se tiver maratona aberta) e abrir na Steam."""
+
+    def __init__(self, cog: "JogarCog", appid: int, nome: str, com_roleta: bool) -> None:
+        super().__init__(timeout=1800)
+        self.cog, self.appid, self.nome = cog, appid, nome
+        if not com_roleta:
+            self.remove_item(self.roleta)
+        self.add_item(discord.ui.Button(label="Ver na Steam", emoji="🛒",
+                                        url=f"https://store.steampowered.com/app/{appid}/"))
+
+    async def on_error(self, interaction, erro, item) -> None:
+        await tratar_erro(interaction, erro)
+
+    @discord.ui.button(label="Salvar na minha lista", emoji="📝", style=discord.ButtonStyle.secondary)
+    async def lista(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        db = self.cog.db
+        db.salvar_steam_nome(self.nome, self.appid)  # a lista sabe qual jogo da Steam é (avisos de promoção)
+        salvos, recusados = db.salvar_na_lista(interaction.user.id, [self.nome])
+        if interaction.guild_id:
+            db.registrar_usuario_servidor(interaction.user.id, interaction.guild_id)
+        texto = (f"📝 **{self.nome}** está na sua lista. Na próxima maratona ele aparece em **Adicionar jogos**."
+                 if salvos else f"**{self.nome}**: {recusados[0][1]}.")
+        await interaction.response.send_message(texto, ephemeral=True)
+
+    @discord.ui.button(label="Colocar na roleta", emoji="➕", style=discord.ButtonStyle.success)
+    async def roleta(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        db = self.cog.db
+        m = db.maratona_aberta(interaction.guild_id)
+        if m is None:
+            raise ErroMaratona("A maratona já acabou. Use **Salvar na minha lista** para guardar para a próxima.")
+        adicionados, recusados = db.adicionar_jogos(m.id, interaction.user.id, [self.nome], {self.nome: self.appid})
+        await interaction.response.send_message(texto_resultado(adicionados, recusados, "Na roleta"), ephemeral=True)
+        maratona_cog = self.cog.bot.get_cog("MaratonaCog")
+        if adicionados and maratona_cog is not None:
+            await maratona_cog.atualizar_painel(m.id)
 
 
 class JogarCog(commands.Cog):
@@ -177,6 +217,87 @@ class JogarCog(commands.Cog):
                 desconto = f" (−{i.desconto}%)" if i.desconto else ""
                 linhas.append(f"**[{i.nome}]({i.url})** · {faixa_texto(faixa)} · {preco}{desconto}")
         return linhas[:MOSTRAR]
+
+    # ---- /jogo ver ----------------------------------------------------
+
+    @jogo.command(name="ver", description="Ficha do jogo: preço, avaliações, modos, nº de jogadores e quem do servidor tem.")
+    @app_commands.describe(jogo="Nome do jogo (aparecem sugestões da Steam enquanto digita)")
+    async def cmd_ver(self, interaction: discord.Interaction, jogo: str) -> None:
+        nome, appid = ler_escolha(jogo)
+        steam = self.bot.get_cog("SteamCog")
+        if steam is None:
+            raise ErroMaratona("A parte da Steam do bot não está ligada.")
+        await interaction.response.defer(thinking=True)
+        if not appid:
+            achado = await steam.reconhecer(nome)
+            if achado is None:
+                parecidos = await steam.parecidos(nome)
+                if not parecidos:
+                    raise ErroMaratona(f"Não achei **{nome}** na Steam. 😕")
+                appid, nome = parecidos[0]
+            else:
+                appid, nome = achado
+        try:
+            detalhes = await steam.loja.detalhes(appid, idioma="brazilian")
+            avaliacoes = await steam.loja.avaliacoes(appid) if detalhes else None
+            await steam.analisar_na_loja([appid], 1)  # guarda preço e nº de jogadores (em inglês)
+        except (ErroSteam, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise ErroMaratona(f"A Steam não respondeu agora ({exc}). Tenta de novo daqui a pouco.")
+        if not detalhes:
+            raise ErroMaratona(f"A Steam não tem a página de **{nome}** no Brasil. 😕")
+
+        nome = detalhes.get("name") or nome
+        e = discord.Embed(title=f"🎮 {nome}", url=f"https://store.steampowered.com/app/{appid}/",
+                          color=COR_DETALHE, description=ficha.descricao_curta(detalhes) or None)
+        if detalhes.get("header_image"):
+            e.set_image(url=detalhes["header_image"])
+        e.add_field(name="💰 Preço", value=ficha.preco_texto(detalhes))
+        e.add_field(name="👍 Avaliações", value=ficha.avaliacao_texto(avaliacoes))
+        faixa = faixa_da_linha(self.db.jogadores_de([appid]).get(appid))
+        e.add_field(name="👥 Jogadores", value=faixa_texto(faixa) if faixa
+                    else "A Steam não diz (ensine com `/jogo jogadores`)")
+        modos = ficha.modos_de_jogo(detalhes)
+        if modos:
+            e.add_field(name="🕹️ Modos", value=" · ".join(modos))
+        extras = [x for x in (" · ".join(ficha.generos(detalhes)), ficha.lancamento(detalhes)) if x]
+        if extras:
+            e.add_field(name="🏷️ Gênero e lançamento", value="\n".join(extras))
+
+        e.add_field(name="🏠 No servidor", value=await self.no_servidor(steam, interaction.guild_id, appid, detalhes),
+                    inline=False)
+        e.set_footer(text="Preço e avaliações da Steam Brasil · o resto é do próprio grupo")
+        aberta = self.db.maratona_aberta(interaction.guild_id) is not None
+        await interaction.followup.send(embed=e, view=FichaView(self, appid, nome, aberta), allowed_mentions=SEM_PING)
+
+    async def no_servidor(self, steam, guild_id: int, appid: int, detalhes: dict) -> str:
+        """Quem tem, quanto custa para o resto, quem quer (lista) e como foi nas maratonas."""
+        linhas = []
+        ids = self.db.usuarios_com_steam(guild_id)
+        if ids and steam.api is not None:
+            try:
+                await steam.atualizar_bibliotecas(ids)
+            except Exception as exc:  # biblioteca velha serve: só não fica atualizada
+                log.info("Não consegui atualizar as bibliotecas: %s", exc)
+            bibliotecas = self.db.bibliotecas(ids)
+            donos = [u for u, jogos in bibliotecas.items() if appid in jogos]
+            faltam = [u for u in bibliotecas if u not in donos]
+            if donos:
+                linhas.append(f"✅ **Têm ({len(donos)}):** " + " ".join(f"<@{u}>" for u in donos))
+            if faltam:
+                preco = (detalhes.get("price_overview") or {}).get("final")
+                custo = "" if detalhes.get("is_free") or preco is None else f" · {reais(preco * len(faltam))} para todos"
+                linhas.append(f"🛒 **Não têm ({len(faltam)}):** " + " ".join(f"<@{u}>" for u in faltam) + custo)
+        else:
+            linhas.append("Ninguém daqui tem a Steam vinculada (`/steam vincular`), então não sei quem tem.")
+        querem = self.db.na_lista_de(guild_id, appid)
+        if querem:
+            linhas.append(f"📝 **Na lista de:** " + " ".join(f"<@{u}>" for u in querem))
+        historico = ficha.nota_do_grupo(self.db.notas_do_servidor(guild_id), appid)
+        if historico:
+            media, quantas, vezes = historico
+            nota = f" · ⭐ {estrelas(media)} {numero(media)} ({plural(quantas, 'nota', 'notas')})" if quantas else ""
+            linhas.append(f"🎰 Saiu em {plural(vezes, 'maratona', 'maratonas')}{nota}")
+        return juntar(linhas)
 
     # ---- /jogo jogadores ---------------------------------------------
 

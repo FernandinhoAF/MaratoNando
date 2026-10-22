@@ -1,17 +1,19 @@
-"""Limpeza do chat: o bot apaga as próprias mensagens fora do canal dele.
+"""Limpeza do chat: o bot apaga as mensagens da MARATONA fora do canal dele.
 
 Como funciona:
   • Um admin escolhe o canal do bot com /config canal-do-bot.
   • Lá, as mensagens do bot ficam para sempre.
-  • Em qualquer outro canal, cada mensagem pública do bot é agendada para sumir
-    depois de alguns minutos (padrão: 10, muda com /config apagar-depois).
-  • Se alguém clicar num botão da mensagem (ex.: lista do /times), o prazo recomeça,
-    para nada sumir no meio do uso.
+  • Em qualquer outro canal, só as mensagens do "durante a maratona" somem depois de alguns
+    minutos (padrão: 10, muda com /config apagar-depois): a roleta girando e a revelação,
+    os pedidos de nota, o painel depois que a maratona acaba, o /reclamou, os avisos de quem
+    entrou/saiu e de modo da roleta, o convite de maratona agendada (depois que ela começa).
+  • O resto fica: /perfil, /jogo, /stats, /o-que-jogar, /bora, /times… e o resumo final da
+    maratona (é a lembrança da noite).
+  • Se alguém clicar num botão da mensagem, o prazo recomeça, para nada sumir no meio do uso.
   • O painel de uma maratona aberta nunca some enquanto ela estiver rolando.
 
-Não precisa mexer em cada comando: o Discord avisa o bot (evento on_message)
-de toda mensagem que ele mesmo manda, e é aí que o agendamento acontece.
-A agenda fica no banco, então sobrevive se o bot reiniciar.
+Quem decide o que é "da maratona" é quem manda a mensagem: o cog da maratona (e o da agenda)
+chama marcar_para_apagar(). A agenda fica no banco, então sobrevive se o bot reiniciar.
 """
 
 import logging
@@ -59,28 +61,27 @@ class LimpezaCog(commands.Cog):
 
     # ---- regras ----------------------------------------------------
 
-    def deve_apagar(self, mensagem: discord.Message) -> Optional[int]:
-        """Quantos minutos até apagar esta mensagem, ou None se ela deve ficar."""
-        if mensagem.guild is None or mensagem.flags.ephemeral:
+    def deve_apagar(self, guild_id: Optional[int], canal_id: int) -> Optional[int]:
+        """Quantos minutos até apagar uma mensagem neste canal, ou None se ela deve ficar."""
+        if guild_id is None:
             return None
-        canal_bot, minutos = self.db.limpeza_config(mensagem.guild.id)
+        canal_bot, minutos = self.db.limpeza_config(guild_id)
         if canal_bot is None or minutos == 0:
             return None
-        canal = mensagem.channel
-        if canal.id == canal_bot or getattr(canal, "parent_id", None) == canal_bot:  # tópicos do canal do bot
+        canal = self.bot.get_channel(canal_id)
+        if canal_id == canal_bot or getattr(canal, "parent_id", None) == canal_bot:  # tópicos do canal do bot
             return None
         return minutos
 
-    # ---- eventos ---------------------------------------------------
-
-    @commands.Cog.listener()
-    async def on_message(self, mensagem: discord.Message) -> None:
-        if self.bot.user is None or mensagem.author.id != self.bot.user.id:
+    def marcar_para_apagar(self, mensagem, guild_id: Optional[int]) -> None:
+        """Agenda uma mensagem DA MARATONA para sumir (se estiver fora do canal do bot)."""
+        if mensagem is None or getattr(getattr(mensagem, "flags", None), "ephemeral", False):
             return
-        minutos = self.deve_apagar(mensagem)
+        minutos = self.deve_apagar(guild_id, mensagem.channel.id)
         if minutos is not None:
-            self.db.agendar_apagar(mensagem.id, mensagem.channel.id, mensagem.guild.id,
-                                   agora() + timedelta(minutes=minutos))
+            self.db.agendar_apagar(mensagem.id, mensagem.channel.id, guild_id, agora() + timedelta(minutes=minutos))
+
+    # ---- eventos ---------------------------------------------------
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction) -> None:
@@ -134,9 +135,10 @@ class LimpezaCog(commands.Cog):
             "Ligados" if self.db.avisar_gratis(guild_id) and canal_bot
             else "Ligados, mas precisam do canal do bot" if self.db.avisar_gratis(guild_id) else "Desligados"))
         if canal_bot and minutos:
-            e.description = (f"Em <#{canal_bot}> as mensagens do bot ficam. Em qualquer outro canal, elas somem "
-                             f"{minutos} min depois da última vez que alguém mexeu nelas. "
-                             "O painel de uma maratona aberta só some depois que ela acaba.")
+            e.description = (f"Em <#{canal_bot}> as mensagens do bot ficam. Em qualquer outro canal, as mensagens "
+                             f"**da maratona** (roleta, notas, reclamações, avisos) somem {minutos} min depois da "
+                             "última vez que alguém mexeu nelas. O painel de uma maratona aberta só some depois que "
+                             "ela acaba, e o resumo final fica. O resto (/perfil, /jogo, /stats, /bora…) não some.")
         return e
 
     @config.command(name="canal-do-bot", description="Escolhe o canal do bot (lá as mensagens não são apagadas).")
@@ -147,7 +149,7 @@ class LimpezaCog(commands.Cog):
                  else "🧹 Limpeza desligada: o bot não apaga mais nenhuma mensagem.")
         await interaction.response.send_message(texto, embed=self.embed_config(interaction.guild_id), ephemeral=True)
 
-    @config.command(name="apagar-depois", description="Quanto tempo as mensagens do bot ficam fora do canal dele.")
+    @config.command(name="apagar-depois", description="Quanto tempo as mensagens da maratona ficam fora do canal do bot.")
     @app_commands.describe(minutos="Minutos até apagar (0 = nunca apagar)")
     async def cmd_minutos(self, interaction: discord.Interaction,
                           minutos: app_commands.Range[int, 0, 1440]) -> None:

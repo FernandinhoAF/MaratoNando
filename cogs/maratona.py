@@ -781,12 +781,27 @@ class MaratonaCog(commands.Cog):
                                                 allowed_mentions=mencoes)
         msg = await interaction.original_response()
         self.db.definir_painel(m.id, msg.channel.id, msg.id)
+        self.para_faxina(msg, m.guild_id)  # o painel só some depois que a maratona acaba
+
+    def para_faxina(self, mensagem, guild_id: Optional[int]) -> None:
+        """Marca uma mensagem da maratona para a faxina apagar (fora do canal do bot). O resto do bot fica."""
+        limpeza = self.bot.get_cog("LimpezaCog")
+        if limpeza is not None:
+            limpeza.marcar_para_apagar(mensagem, guild_id)
+
+    async def resposta_para_faxina(self, interaction: discord.Interaction) -> None:
+        """Igual ao para_faxina, para a mensagem que acabou de ser a resposta da interação."""
+        try:
+            self.para_faxina(await interaction.original_response(), interaction.guild_id)
+        except discord.HTTPException:
+            pass
 
     async def enviar_painel_no_canal(self, canal: discord.abc.Messageable, m: Maratona, texto: Optional[str] = None,
                                      mencoes: discord.AllowedMentions = SEM_PING) -> None:
         """Igual ao enviar_painel, mas sem ninguém ter clicado em nada (ex.: maratona agendada que abriu sozinha)."""
         msg = await canal.send(texto, embed=self.embed_painel(m), view=self.painel_view, allowed_mentions=mencoes)
         self.db.definir_painel(m.id, msg.channel.id, msg.id)
+        self.para_faxina(msg, m.guild_id)
 
     async def abrir_adicionar(self, interaction: discord.Interaction, m: Maratona) -> None:
         """Botão "Adicionar jogos": mostra a lista salva (se tiver) ou abre direto o formulário."""
@@ -1090,6 +1105,7 @@ class MaratonaCog(commands.Cog):
         if avisos:
             texto += "\n-# " + " · ".join(avisos)
         await interaction.response.send_message(texto, allowed_mentions=SEM_PING)
+        await self.resposta_para_faxina(interaction)
         await self.atualizar_painel(m.id)
 
     def validar_modo(self, modo: str, preco: Optional[int]) -> Optional[int]:
@@ -1120,6 +1136,7 @@ class MaratonaCog(commands.Cog):
         await interaction.response.send_message(
             f"🎯 Modo da roleta: **{modos.descricao(m.modo, m.modo_preco)}**\n{explicacao} "
             "Os outros jogos continuam na roleta e voltam a valer se o modo mudar.", allowed_mentions=SEM_PING)
+        await self.resposta_para_faxina(interaction)
         await self.atualizar_painel(m.id)
 
     # ---- ajuda -------------------------------------------------------
@@ -1195,6 +1212,7 @@ class MaratonaCog(commands.Cog):
             pergunta = f"De quem será o jogo **#{jogados + 1}**?\n\n"
             await interaction.response.send_message(embed=self.embed_roleta(pergunta + "➡️ …"),
                                                     allowed_mentions=SEM_PING)
+            await self.resposta_para_faxina(interaction)  # a roleta (que vira a revelação) é da maratona
             permitidos, conferidos, aviso_modo = None, {}, ""
             if m.modo != "livre":
                 # Modo ligado: confere quem tem cada jogo ANTES de sortear (a roleta já está na tela).
@@ -1318,7 +1336,8 @@ class MaratonaCog(commands.Cog):
             # Se a mensagem da roleta sumiu, o resultado ainda aparece.
             if arquivo:
                 arquivo.reset()
-            await interaction.channel.send(embed=revelacao, files=anexos, allowed_mentions=SEM_PING)
+            msg = await interaction.channel.send(embed=revelacao, files=anexos, allowed_mentions=SEM_PING)
+            self.para_faxina(msg, interaction.guild_id)
 
     async def nome_exibido(self, guild: Optional[discord.Guild], user_id: int) -> str:
         """O nome que a pessoa usa no servidor (para escrever nas imagens, onde menção não funciona)."""
@@ -1422,8 +1441,9 @@ class MaratonaCog(commands.Cog):
         if canal is None or not self.db.marcar_nota_pedida(jogo.id):
             return
         try:
-            await canal.send(embed=self.embed_notas(jogo, proximo), view=view_notas(jogo.id),
-                             allowed_mentions=SEM_PING)
+            msg = await canal.send(embed=self.embed_notas(jogo, proximo), view=view_notas(jogo.id),
+                                   allowed_mentions=SEM_PING)
+            self.para_faxina(msg, getattr(getattr(canal, "guild", None), "id", None))
         except discord.HTTPException as exc:
             log.warning("Não consegui pedir as notas de %s: %s", jogo.nome, exc)
 
@@ -1556,6 +1576,7 @@ class MaratonaCog(commands.Cog):
         e.set_thumbnail(url=url_nando(self.bot, "surpreso"))
         e.set_footer(text=ASSINATURA)
         await interaction.response.send_message(embed=e, allowed_mentions=SEM_PING)
+        await self.resposta_para_faxina(interaction)
         await self.atualizar_painel(m.id)
 
 

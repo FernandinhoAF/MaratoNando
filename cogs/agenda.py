@@ -113,6 +113,12 @@ class AgendaCog(commands.Cog):
                          + (" · também está no calendário do servidor" if ag.evento_id else ""))
         return e
 
+    def para_faxina(self, mensagem, guild_id) -> None:
+        """Mensagens da maratona agendada também são da faxina (veja cogs/limpeza.py)."""
+        limpeza = self.bot.get_cog("LimpezaCog")
+        if limpeza is not None:
+            limpeza.marcar_para_apagar(mensagem, guild_id)
+
     async def atualizar_mensagem(self, ag: Agendamento) -> None:
         if ag.message_id is None:
             return
@@ -142,6 +148,7 @@ class AgendaCog(commands.Cog):
                                                 view=view_agenda(ag.id), allowed_mentions=SEM_PING)
         msg = await interaction.original_response()
         self.db.definir_mensagem_agendamento(ag.id, msg.id, evento_id)
+        self.para_faxina(msg, interaction.guild_id)  # o convite só some depois que a maratona começa
         if evento_id:
             await self.atualizar_mensagem(self.db.agendamento(ag.id))  # rodapé com "está no calendário"
         if aviso:
@@ -256,7 +263,7 @@ class AgendaCog(commands.Cog):
             onde = f" em <#{aberta.channel_id}>" if aberta else ""
             texto = (f"{mencao}{pessoas}\n⏰ **{ag.nome}** começa {quando}! "
                      f"Já tem uma maratona aberta{onde}, então não abri outra.")
-            await canal.send(texto, allowed_mentions=mencoes)
+            self.para_faxina(await canal.send(texto, allowed_mentions=mencoes), ag.guild_id)
 
         await self.atualizar_mensagem(self.db.agendamento(ag.id))
         await self.iniciar_evento(ag)

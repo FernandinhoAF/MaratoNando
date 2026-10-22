@@ -16,6 +16,7 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 - **Lista pessoal**: lembrou de um jogo no meio da semana? `/lista adicionar` guarda ele. Na maratona, ao clicar em **Adicionar jogos**, a lista aparece para você marcar o que quer colocar na roleta. Jogos sorteados saem da lista sozinhos, e os que não saíram voltam para ela quando a maratona acaba.
 - **📡 Radar de jogos**: o bot acompanha streamers escolhidos pelo servidor (ex.: alanzoka) na Twitch, vê o que eles jogam e cruza com a Steam. Só vira sugestão o jogo que é **multiplayer**, **barato** (até R$ 60, configurável) e **bem avaliado** (70%+). Dá para salvar as sugestões direto na lista pessoal, e o bot pode avisar num canal quando aparecer jogo novo.
 - **🛒 Sugestões da Steam** (`/sugestao`): jogos co-op online em alta, novidades ou em promoção, filtrados pelas tags da Steam para sobrar só friendslop: precisa ter tag de jogar junto (Online Co-Op, Party Game…) **e** de diversão (Funny, Comedy, Social Deduction, Physics…), nenhuma tag de jogo "sério" (MMO, Competitive, Sports), preço baixo e 80%+ de avaliações positivas.
+- **🎮 O que jogar agora?** (`/o-que-jogar`): "estamos em 4, o que dá para jogar?", com ou sem maratona. O bot pega quem está na sua call (ou quem você marcar, ou só o número de pessoas) e sugere: os jogos **que vocês já têm** na Steam e que aceitam exatamente esse número de pessoas, do mais barato para o grupo ao mais caro; e **novidades friendslop** da loja que também servem. Quantas pessoas cada jogo aceita vem da descrição da Steam ("up to 6 players", "1-4 players", "até 4 jogadores"…). Quando a descrição não diz (ou diz errado), qualquer um ensina com `/jogo jogadores` (ex.: Lethal Company = 1 a 4), e o que o grupo ensina vale para sempre.
 - **👥 Sorteio de times** (`/times`): começa a lista com quem está jogando a maratona (ou, sem maratona aberta, com quem está na call), pergunta se mais alguém vai jogar e só então sorteia times equilibrados.
 - **🧹 Chat limpo**: com `/config canal-do-bot`, o bot ganha um canal próprio onde as mensagens ficam. Em qualquer outro canal, as mensagens dele somem sozinhas depois de alguns minutos (padrão: 10). Se alguém estiver usando os botões de uma mensagem, o prazo recomeça; e o painel de uma maratona aberta só some depois que ela acaba.
 - **💸 Avisos de promoção**: a cada 6 horas o bot confere na Steam o preço dos jogos que estão nas listas pessoais. Quando um deles entra em promoção (ou o desconto aumenta), ele avisa no canal do bot marcando (com notificação) só quem tem aquele jogo na lista. O `/lista ver` também mostra quais jogos da sua lista estão em promoção.
@@ -54,6 +55,8 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 | `/reclamou @pessoa` | Manda alguém pro Mural da Vergonha | Qualquer pessoa |
 | `/stats` | Estatísticas do grupo: maratonas, horas, jogos mais sorteados, quem mais coloca jogo, mural de todos os tempos e maratonas por mês | Qualquer pessoa |
 | `/ranking` | Os jogos favoritos do grupo, pela média das notas de todas as maratonas (só jogos com 2 notas ou mais) | Qualquer pessoa |
+| `/o-que-jogar [pessoas] [jogadores] [preco_max]` | Jogos para o número exato de pessoas: o que vocês já têm (mais barato para o grupo primeiro) e novidades da loja | Qualquer pessoa |
+| `/jogo jogadores jogo [maximo] [minimo]` | Mostra quantas pessoas um jogo aceita, ou ensina o bot (o que o grupo ensina vale mais que a Steam) | Qualquer pessoa |
 | `/sugestao [tipo]` | Sugestões de friendslop só pela Steam: em alta, novidades ou em promoção | Qualquer pessoa |
 | `/sortear-times [quantidade] [jogadores]` | Sorteia times sem ligação com a maratona: marque as pessoas (`@Ana @Bia…`) para sortear na hora, ou deixe vazio para começar com quem está na sua call | Qualquer pessoa (só quem pediu sorteia) |
 | `/times [quantidade]` | Monta a lista de quem vai jogar (maratona primeiro, call depois) e sorteia os times (2 a 8) | Qualquer pessoa (só quem pediu sorteia) |
@@ -190,6 +193,7 @@ MaratoNando/
 ├── times.py           # divisão equilibrada em times
 ├── biblioteca.py      # custo para o grupo: cruza as bibliotecas da Steam
 ├── nomes.py           # nomes parecidos, repetidos e o "você quis dizer…?"
+├── jogadores.py       # quantas pessoas cada jogo aceita, lido da descrição da Steam
 ├── agenda.py          # datas digitadas ("sábado" + "21h30") para o /maratona agendar
 ├── estatisticas.py    # contas do /stats: horas, mais sorteados, quem mais coloca jogo, por mês
 ├── notas.py           # notas dos jogos: médias, estrelas e o ranking dos favoritos
@@ -204,6 +208,7 @@ MaratoNando/
 │   ├── promocoes.py   # vigia de promoções dos jogos das listas
 │   ├── steam.py       # /steam e o /maratona baratos
 │   ├── chamar.py      # /chamar
+│   ├── jogar.py       # /o-que-jogar e /jogo jogadores
 │   └── agenda.py      # /maratona agendar: convite, evento do calendário e abertura automática
 ├── servicos/
 │   ├── twitch.py      # cliente da API oficial da Twitch
@@ -219,6 +224,7 @@ MaratoNando/
 │   ├── test_biblioteca.py # testes do custo para o grupo e das contas Steam
 │   ├── test_chamar.py # testes do cargo de jogos e do /chamar
 │   ├── test_nomes.py  # testes de nomes digitados com erro e repetidos
+│   ├── test_jogadores.py # testes da leitura do nº de jogadores (com textos reais da Steam)
 │   ├── test_agenda.py # testes das datas e dos agendamentos
 │   ├── test_estatisticas.py # testes do /stats
 │   ├── test_notas.py  # testes das notas e do ranking

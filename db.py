@@ -249,6 +249,18 @@ CREATE TABLE IF NOT EXISTS catalogo (
     nome  TEXT NOT NULL
 );
 
+-- Quantas pessoas cada jogo da Steam aceita (/o-que-jogar).
+-- fonte 'steam' = lido da descrição da loja (minimo/maximo NULL = a descrição não diz);
+-- fonte 'grupo' = alguém ensinou com /jogo jogadores, e isso nunca é sobrescrito pela Steam.
+CREATE TABLE IF NOT EXISTS jogadores_jogo (
+    appid         INTEGER PRIMARY KEY,
+    minimo        INTEGER,
+    maximo        INTEGER,
+    fonte         TEXT    NOT NULL,
+    definido_por  INTEGER,
+    atualizado_em TEXT    NOT NULL
+);
+
 -- Maratonas marcadas para depois (/maratona agendar).
 CREATE TABLE IF NOT EXISTS agendamentos (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -827,6 +839,37 @@ class Database:
             (guild_id,),
         ).fetchall()
         return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+    # ---- número de jogadores ----------------------------------------
+
+    def salvar_jogadores_steam(self, appid: int, faixa: tuple[int, int] | None) -> None:
+        """Guarda o que foi lido da descrição da Steam, sem mexer no que o grupo ensinou."""
+        minimo, maximo = faixa if faixa else (None, None)
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO jogadores_jogo (appid, minimo, maximo, fonte, atualizado_em) VALUES (?, ?, ?, 'steam', ?)"
+                " ON CONFLICT (appid) DO UPDATE SET minimo = excluded.minimo, maximo = excluded.maximo,"
+                " atualizado_em = excluded.atualizado_em WHERE jogadores_jogo.fonte = 'steam'",
+                (appid, minimo, maximo, agora()),
+            )
+
+    def definir_jogadores_grupo(self, appid: int, minimo: int, maximo: int, user_id: int) -> None:
+        if not 1 <= minimo <= maximo:
+            raise ErroMaratona("O mínimo de jogadores tem que ser pelo menos 1 e não pode passar do máximo.")
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO jogadores_jogo (appid, minimo, maximo, fonte, definido_por, atualizado_em)"
+                " VALUES (?, ?, ?, 'grupo', ?, ?) ON CONFLICT (appid) DO UPDATE SET minimo = excluded.minimo,"
+                " maximo = excluded.maximo, fonte = 'grupo', definido_por = excluded.definido_por,"
+                " atualizado_em = excluded.atualizado_em",
+                (appid, minimo, maximo, user_id, agora()),
+            )
+
+    def jogadores_de(self, appids: list[int]) -> dict[int, sqlite3.Row]:
+        """Linhas de jogadores_jogo desses jogos. Ausente = o bot ainda não olhou a descrição."""
+        marcas = ", ".join("?" for _ in appids) or "NULL"
+        rows = self.conn.execute(f"SELECT * FROM jogadores_jogo WHERE appid IN ({marcas})", tuple(appids))
+        return {r["appid"]: r for r in rows}
 
     # ---- agendamentos ----------------------------------------------
 

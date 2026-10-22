@@ -22,6 +22,7 @@ from discord.ext import commands
 
 from biblioteca import (AppSteam, Opcao, app_da_linha, app_de_detalhes, calcular_opcoes,
                         escolher_candidatos, ler_perfil, reais)
+from jogadores import extrair_de_detalhes
 from nomes import ranquear_parecidos, termos_de_busca
 from radar import normalizar
 from cogs.maratona import SEM_PING, juntar, plural, tratar_erro
@@ -188,12 +189,16 @@ class SteamCog(commands.Cog):
         """Consulta na loja os jogos que ainda não conheço (ou com preço velho). Devolve quantos ficaram faltando."""
         async with self.analisando:
             conhecidos = self.db.apps(appids)
+            com_jogadores = self.db.jogadores_de(appids)  # já leu quantas pessoas o jogo aceita?
             faltam = [a for a in appids
-                      if a not in conhecidos or antes_de(conhecidos[a]["verificado_em"], days=LOJA_VALIDA_DIAS)]
+                      if a not in conhecidos or a not in com_jogadores
+                      or antes_de(conhecidos[a]["verificado_em"], days=LOJA_VALIDA_DIAS)]
             for n, appid in enumerate(faltam[:limite], start=1):
                 detalhes = await self.loja.detalhes(appid)
                 nome = conhecidos[appid]["nome"] if appid in conhecidos else ""
                 self.db.salvar_app(app_de_detalhes(appid, detalhes, agora(), nome))
+                if detalhes:
+                    self.db.salvar_jogadores_steam(appid, extrair_de_detalhes(detalhes))
                 if progresso and n % 10 == 0:
                     await progresso(n, min(len(faltam), limite))
                 await asyncio.sleep(PAUSA)

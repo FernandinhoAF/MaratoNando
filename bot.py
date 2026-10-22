@@ -35,6 +35,7 @@ class MaratoNando(commands.Bot):
         await self.load_extension("cogs.steam")
         await self.load_extension("cogs.chamar")
         await self.load_extension("cogs.agenda")
+        await self.load_extension("cogs.jogar")
 
         # Com DEV_GUILD_ID, os comandos aparecem na hora só naquele servidor (bom para testar).
         # Sem ele, são registrados para todos os servidores (pode levar alguns minutos).

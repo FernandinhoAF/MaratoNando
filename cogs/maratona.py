@@ -14,6 +14,8 @@ import cartoes
 from biblioteca import resumo_grupo, rodape_card
 from marca import ASSINATURA, COR_FIM, COR_PAINEL, COR_ROLETA, COR_VERGONHA, url_nando
 from nomes import ler_escolha, mesmo_jogo, valor_escolha
+from notas import MINIMO_NOTAS_RANKING, estrelas, numero, resumo_nota
+from notas import ranking as ranking_notas
 from db import Database, ErroMaratona, ItemLista, Jogo, Maratona, limpar_nome, separar_nomes
 
 log = logging.getLogger("maratonando")
@@ -486,6 +488,35 @@ class ConfirmarEncerramentoView(discord.ui.View):
 
 # ---------------------------------------------------------------- cog
 
+class BotaoNota(discord.ui.DynamicItem[discord.ui.Button], template=r"nota:(?P<jogo>\d+):(?P<nota>[1-5])"):
+    """Um dos 5 botões de nota de um jogo. O número do jogo e a nota ficam no próprio custom_id,
+    então os botões continuam funcionando mesmo depois que o bot reinicia."""
+
+    def __init__(self, jogo_id: int, nota: int) -> None:
+        super().__init__(discord.ui.Button(label=str(nota), emoji="⭐", style=discord.ButtonStyle.secondary,
+                                           custom_id=f"nota:{jogo_id}:{nota}"))
+        self.jogo_id = jogo_id
+        self.nota = nota
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(int(match["jogo"]), int(match["nota"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        cog: "MaratonaCog" = interaction.client.get_cog("MaratonaCog")  # type: ignore[assignment]
+        try:
+            await cog.receber_nota(interaction, self.jogo_id, self.nota)
+        except Exception as erro:
+            await tratar_erro(interaction, erro)
+
+
+def view_notas(jogo_id: int) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    for nota in range(1, 6):
+        view.add_item(BotaoNota(jogo_id, nota))
+    return view
+
+
 class MaratonaCog(commands.Cog):
     maratona = app_commands.Group(
         name="maratona",
@@ -512,6 +543,7 @@ class MaratonaCog(commands.Cog):
 
     async def cog_load(self) -> None:
         self.bot.add_view(self.painel_view)  # religa os botões dos painéis antigos
+        self.bot.add_dynamic_items(BotaoNota)  # e os botões de nota
         self.bot.tree.add_command(self.menu_reclamou)
 
     async def cog_unload(self) -> None:
@@ -872,7 +904,9 @@ class MaratonaCog(commands.Cog):
             "Na maratona, sua lista aparece quando você clica em **Adicionar jogos**.\n"
             "**4.** Reclamou do jogo? Use `/reclamou` (ou clique com o botão direito na pessoa → "
             "Apps → **Reclamou!**). Vai pro **Mural da Vergonha**. 😤\n"
-            "**5.** No fim, **🏁 Encerrar** mostra o resumo da noite.\n\n"
+            "**5.** Depois de cada jogo, o bot pede uma nota de 1 a 5 ⭐. As notas formam o `/ranking` "
+            "dos favoritos do grupo.\n"
+            "**6.** No fim, **🏁 Encerrar** mostra o resumo da noite.\n\n"
             "Chegou no meio? Clique em **🙋 Tô jogando** no painel.\n"
             "Não querem gastar? `/maratona baratos` mostra o que sai mais barato para o grupo.\n"
             "Jogo em equipe? `/times` sorteia os times.\n"
@@ -909,6 +943,10 @@ class MaratonaCog(commands.Cog):
         finally:
             self.girando.discard(m.id)
         await self.atualizar_painel(m.id)
+        # O jogo anterior acabou de ser jogado: hora de dar nota para ele.
+        anterior = self.db.jogo_por_ordem(m.id, sorteio.numero - 1)
+        if anterior is not None:
+            await self.pedir_notas(interaction.channel, anterior, proximo=sorteio.jogo.nome)
 
     async def animar_roleta(self, interaction: discord.Interaction, m: Maratona,
                             jogo: Jogo, numero: int, restantes: int,
@@ -995,6 +1033,9 @@ class MaratonaCog(commands.Cog):
     async def encerrar(self, interaction: discord.Interaction, m: Maratona) -> None:
         m = self.db.encerrar(m.id)
         await interaction.response.edit_message(content="🏁 Maratona encerrada!", view=None)
+        ultimo = self.db.ultimo_sorteado(m.id)
+        if ultimo is not None:
+            await self.pedir_notas(interaction.channel, ultimo)
         e = self.embed_resumo(m)
         arquivo = await self.card_resumo(interaction.guild, m)
         if arquivo:
@@ -1020,6 +1061,13 @@ class MaratonaCog(commands.Cog):
         jogados = sorted((j for j in jogos if j.jogado), key=lambda j: j.ordem)
         sobras = [j for j in jogos if not j.jogado]
         mural = self.db.mural(m.id)
+        notas = self.db.notas_da_maratona(m.id)
+
+        def com_nota(j: Jogo) -> str:
+            if j.id not in notas:
+                return ""
+            media, _ = notas[j.id]
+            return f" · ⭐ {numero(media)}"
 
         e = discord.Embed(
             title=f"🏁 Fim da maratona: {m.nome}", color=COR_FIM,
@@ -1027,8 +1075,12 @@ class MaratonaCog(commands.Cog):
                         f"**{duracao(m.criada_em, m.encerrada_em)}**. GG a todos! 🎉",
         )
         e.add_field(name="🎮 O que jogamos",
-                    value=juntar([f"`{j.ordem}.` **{j.nome}** — <@{j.user_id}>" for j in jogados],
+                    value=juntar([f"`{j.ordem}.` **{j.nome}** — <@{j.user_id}>{com_nota(j)}" for j in jogados],
                                  vazio="Nenhum jogo foi sorteado."), inline=False)
+        if notas:
+            melhor = max((j for j in jogados if j.id in notas), key=lambda j: (notas[j.id][0], notas[j.id][1]))
+            e.add_field(name="🏆 Melhor da noite (até agora)",
+                        value=f"**{melhor.nome}** — {resumo_nota(*notas[melhor.id])}", inline=False)
         if sobras:
             e.add_field(name="📦 Ficaram na roleta (revelados!)",
                         value=juntar([f"**{j.nome}** — <@{j.user_id}>" for j in sobras]), inline=False)
@@ -1036,6 +1088,63 @@ class MaratonaCog(commands.Cog):
         e.add_field(name="😤 Mural da Vergonha",
                     value=juntar(ranking(mural), vazio="Ninguém reclamou. Que grupo exemplar! 😇"), inline=False)
         return e
+
+    # ---- notas dos jogos -------------------------------------------
+
+    def embed_notas(self, jogo: Jogo, proximo: Optional[str] = None) -> discord.Embed:
+        media, quantas = self.db.media_do_jogo(jogo.id)
+        antes = f"Antes de começar **{proximo}**: " if proximo else ""
+        e = discord.Embed(
+            title=f"⭐ Que nota vocês dão para {jogo.nome}?", color=COR_ROLETA,
+            description=f"{antes}foi o jogo **#{jogo.ordem}** da noite, escolhido por <@{jogo.user_id}>.\n"
+                        "Cada um clica na sua nota, de 1 a 5. Mudou de ideia? É só clicar de novo.",
+        )
+        e.add_field(name="Nota do grupo", value=resumo_nota(media, quantas))
+        e.set_thumbnail(url=url_nando(self.bot))
+        e.set_footer(text="As notas formam o /ranking dos jogos favoritos do grupo.")
+        return e
+
+    async def pedir_notas(self, canal, jogo: Jogo, proximo: Optional[str] = None) -> None:
+        """Posta os botões de nota de um jogo (uma vez só por jogo)."""
+        if canal is None or not self.db.marcar_nota_pedida(jogo.id):
+            return
+        try:
+            await canal.send(embed=self.embed_notas(jogo, proximo), view=view_notas(jogo.id),
+                             allowed_mentions=SEM_PING)
+        except discord.HTTPException as exc:
+            log.warning("Não consegui pedir as notas de %s: %s", jogo.nome, exc)
+
+    async def receber_nota(self, interaction: discord.Interaction, jogo_id: int, nota: int) -> None:
+        self.db.dar_nota(jogo_id, interaction.user.id, nota)
+        jogo = self.db.jogo(jogo_id)
+        # Atualiza a média na mensagem (mantendo o "Antes de começar…" que já estava escrito).
+        embed = self.embed_notas(jogo)
+        if interaction.message and interaction.message.embeds:
+            embed.description = interaction.message.embeds[0].description
+        await interaction.response.edit_message(embed=embed, allowed_mentions=SEM_PING)
+        await interaction.followup.send(f"Sua nota para **{jogo.nome}**: {estrelas(nota)} ({nota}). Valeu!",
+                                        ephemeral=True)
+
+    @app_commands.command(name="ranking", description="Os jogos favoritos do grupo, pelas notas das maratonas.")
+    @app_commands.guild_only()
+    async def cmd_ranking(self, interaction: discord.Interaction) -> None:
+        jogos = ranking_notas(self.db.notas_do_servidor(interaction.guild_id))
+        linhas = []
+        for i, j in enumerate(jogos[:10]):
+            posicao = MEDALHAS[i] if i < len(MEDALHAS) else f"`{i + 1}.`"
+            vezes = f" · jogado {j.vezes}x" if j.vezes > 1 else ""
+            linhas.append(f"{posicao} **{j.nome}** — {estrelas(j.media)} {numero(j.media)} "
+                          f"({j.notas} notas{vezes})")
+        e = discord.Embed(
+            title="🏆 Jogos favoritos do grupo", color=COR_ROLETA,
+            description=juntar(linhas, limite=4000, vazio=(
+                "Ainda não tem jogo com notas suficientes. Depois de cada jogo da maratona, "
+                "o bot pede uma nota de 1 a 5. Joguem e votem! 🎮")),
+        )
+        e.set_thumbnail(url=url_nando(self.bot))
+        e.set_footer(text=f"Média das notas de todas as maratonas · só entram jogos com "
+                          f"{MINIMO_NOTAS_RANKING} notas ou mais")
+        await interaction.response.send_message(embed=e, allowed_mentions=SEM_PING)
 
     # ---- /lista ----------------------------------------------------
 

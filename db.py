@@ -248,6 +248,16 @@ CREATE TABLE IF NOT EXISTS catalogo (
     appid INTEGER PRIMARY KEY,
     nome  TEXT NOT NULL
 );
+
+-- Nota (1 a 5) que cada pessoa deu para cada jogo jogado numa maratona.
+-- Uma nota por pessoa por jogo: clicar de novo troca a nota.
+CREATE TABLE IF NOT EXISTS notas (
+    jogo_id INTEGER NOT NULL REFERENCES jogos (id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL,
+    nota    INTEGER NOT NULL CHECK (nota BETWEEN 1 AND 5),
+    dada_em TEXT    NOT NULL,
+    PRIMARY KEY (jogo_id, user_id)
+);
 """
 
 # Colunas criadas depois da primeira versão: adicionadas sozinhas em bancos antigos.
@@ -256,6 +266,7 @@ MIGRACOES = [
     ("limpeza_config", "cargo_jogos", "INTEGER"),        # cargo marcado para chamar o pessoal
     ("limpeza_config", "ultimo_ping_cargo", "TEXT"),     # quando o bot marcou esse cargo pela última vez
     ("jogos", "appid", "INTEGER"),                       # jogo da Steam (quando o bot reconheceu)
+    ("jogos", "nota_pedida_em", "TEXT"),                 # quando o bot postou os botões de nota deste jogo
 ]
 
 MINUTOS_ENTRE_PINGS = 30  # o cargo é marcado no máximo uma vez a cada 30 minutos
@@ -304,6 +315,7 @@ class Jogo:
     sorteado_em: str | None
     ordem: int | None
     appid: int | None = None  # jogo da Steam, quando reconhecido
+    nota_pedida_em: str | None = None  # quando o bot pediu as notas deste jogo
 
     @property
     def jogado(self) -> bool:
@@ -706,6 +718,77 @@ class Database:
             (maratona_id,),
         ).fetchall()
         return [(r["user_id"], r["n"]) for r in rows]
+
+    # ---- notas dos jogos -------------------------------------------
+
+    def jogo(self, jogo_id: int) -> Jogo | None:
+        row = self.conn.execute("SELECT * FROM jogos WHERE id = ?", (jogo_id,)).fetchone()
+        return Jogo(**row) if row else None
+
+    def jogo_por_ordem(self, maratona_id: int, ordem: int) -> Jogo | None:
+        """O N-ésimo jogo sorteado da maratona (1 = o primeiro da noite)."""
+        row = self.conn.execute(
+            "SELECT * FROM jogos WHERE maratona_id = ? AND ordem = ?", (maratona_id, ordem)
+        ).fetchone()
+        return Jogo(**row) if row else None
+
+    def marcar_nota_pedida(self, jogo_id: int) -> bool:
+        """Anota que o bot pediu as notas deste jogo. False se já tinha pedido (não pede duas vezes)."""
+        with self.conn:
+            cur = self.conn.execute(
+                "UPDATE jogos SET nota_pedida_em = ? WHERE id = ? AND nota_pedida_em IS NULL AND ordem IS NOT NULL",
+                (agora(), jogo_id),
+            )
+        return cur.rowcount == 1
+
+    def dar_nota(self, jogo_id: int, user_id: int, nota: int) -> tuple[float, int]:
+        """Grava (ou troca) a nota da pessoa para o jogo. Devolve (média, quantas notas) do jogo."""
+        if not 1 <= nota <= 5:
+            raise ErroMaratona("A nota vai de 1 a 5.")
+        jogo = self.jogo(jogo_id)
+        if jogo is None or not jogo.jogado:
+            raise ErroMaratona("Não achei esse jogo. Ele pode ter sido apagado.")
+        m = self.maratona(jogo.maratona_id)
+        if user_id != m.host_id and user_id not in self.jogadores(m.id):
+            dica = " Se você está jogando, clique em **🙋 Tô jogando** no painel." if m.aberta else ""
+            raise ErroMaratona("Só quem estava na maratona pode dar nota." + dica)
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO notas (jogo_id, user_id, nota, dada_em) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (jogo_id, user_id) DO UPDATE SET nota = excluded.nota, dada_em = excluded.dada_em",
+                (jogo_id, user_id, nota, agora()),
+            )
+        return self.media_do_jogo(jogo_id)
+
+    def media_do_jogo(self, jogo_id: int) -> tuple[float, int]:
+        """(média, quantas notas). Sem notas: (0.0, 0)."""
+        row = self.conn.execute(
+            "SELECT COALESCE(AVG(nota), 0) AS media, COUNT(*) AS n FROM notas WHERE jogo_id = ?", (jogo_id,)
+        ).fetchone()
+        return float(row["media"]), row["n"]
+
+    def notas_da_maratona(self, maratona_id: int) -> dict[int, tuple[float, int]]:
+        """{jogo_id: (média, quantas notas)} dos jogos desta maratona que já têm nota."""
+        rows = self.conn.execute(
+            "SELECT n.jogo_id, AVG(n.nota) AS media, COUNT(*) AS q FROM notas n"
+            " JOIN jogos j ON j.id = n.jogo_id WHERE j.maratona_id = ? GROUP BY n.jogo_id",
+            (maratona_id,),
+        ).fetchall()
+        return {r["jogo_id"]: (float(r["media"]), r["q"]) for r in rows}
+
+    def notas_do_servidor(self, guild_id: int) -> list[tuple[int, str, int | None, int | None]]:
+        """Todos os jogos já jogados no servidor com suas notas: [(jogo_id, nome, appid, nota ou None)].
+
+        Um jogo sem nenhuma nota aparece uma vez com nota None (conta como "jogado", mas sem nota).
+        """
+        rows = self.conn.execute(
+            "SELECT j.id, j.nome, j.appid, n.nota FROM jogos j"
+            " JOIN maratonas m ON m.id = j.maratona_id"
+            " LEFT JOIN notas n ON n.jogo_id = j.id"
+            " WHERE m.guild_id = ? AND j.ordem IS NOT NULL ORDER BY j.id",
+            (guild_id,),
+        ).fetchall()
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
 
     # ---- radar de jogos --------------------------------------------
 

@@ -36,6 +36,7 @@ from marca import COR_DETALHE, COR_PAINEL, url_nando
 from nomes import ler_escolha
 from radar import PRECO_MAX_PADRAO
 from servicos.steam import ErroSteam
+from cogs.steam import SteamModal
 from sugestao import filtrar
 
 log = logging.getLogger("maratonando.jogar")
@@ -166,36 +167,32 @@ class OQueJogarView(discord.ui.View):
         await self.cog.cog_ou_erro("RadarCog").mostrar_radar(interaction)
 
 
-class SteamModal(discord.ui.Modal, title="Vincular a sua Steam"):
-    perfil = discord.ui.TextInput(label="Link do seu perfil na Steam",
-                                  placeholder="https://steamcommunity.com/id/seunome", max_length=200)
-
-    def __init__(self, cog: "JogarCog") -> None:
-        super().__init__()
-        self.cog = cog
-
-    async def on_error(self, interaction, erro) -> None:
-        await tratar_erro(interaction, erro)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        await self.cog.cog_ou_erro("SteamCog").vincular(interaction, self.perfil.value.strip())
-
-
 class PerfilView(discord.ui.View):
-    """No seu próprio /perfil: vincular, trocar ou desvincular a Steam."""
+    """Botões da Steam no /perfil.
 
-    def __init__(self, cog: "JogarCog", dono: int, vinculada: bool) -> None:
+    No seu próprio perfil: vincular, trocar ou desvincular a sua. No perfil de outra pessoa,
+    só aparecem para admins (permissão "Gerenciar servidor"), que podem vincular por ela.
+    """
+
+    def __init__(self, cog: "JogarCog", quem_abriu: int, alvo: discord.Member, vinculada: bool) -> None:
         super().__init__(timeout=1800)
-        self.cog, self.dono = cog, dono
+        self.cog, self.quem_abriu = cog, quem_abriu
+        self.alvo = None if alvo.id == quem_abriu else alvo  # None = o próprio perfil
+        if self.alvo is None:
+            self.vincular.label = "Trocar conta da Steam" if vinculada else "Vincular Steam"
+        else:
+            nome = alvo.display_name[:40]
+            self.vincular.label = f"{'Trocar' if vinculada else 'Vincular'} a Steam de {nome}"
+            self.desvincular.label = f"Desvincular a de {nome}"
         if vinculada:
-            self.vincular.label, self.vincular.emoji = "Trocar conta da Steam", "🔄"
+            self.vincular.emoji = "🔄"
         else:
             self.remove_item(self.desvincular)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.dono:
+        if interaction.user.id != self.quem_abriu:
             await interaction.response.send_message(
-                "Esses botões são do dono do perfil. Use `/perfil` para ver o seu. 😉", ephemeral=True)
+                "Esses botões são de quem abriu este perfil. Use `/perfil` para ver o seu. 😉", ephemeral=True)
             return False
         return True
 
@@ -204,11 +201,11 @@ class PerfilView(discord.ui.View):
 
     @discord.ui.button(label="Vincular Steam", emoji="🔗", style=discord.ButtonStyle.primary)
     async def vincular(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        await interaction.response.send_modal(SteamModal(self.cog))
+        await interaction.response.send_modal(SteamModal(self.cog.cog_ou_erro("SteamCog"), self.alvo))
 
     @discord.ui.button(label="Desvincular", emoji="🗑️", style=discord.ButtonStyle.secondary)
     async def desvincular(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        await self.cog.cog_ou_erro("SteamCog").desvincular(interaction)
+        await self.cog.cog_ou_erro("SteamCog").desvincular(interaction, self.alvo)
 
 
 class JogarCog(commands.Cog):
@@ -450,21 +447,31 @@ class JogarCog(commands.Cog):
         await interaction.response.defer(thinking=True)
         e = discord.Embed(title=f"🎮 Perfil de {alvo.display_name}", color=COR_PAINEL)
         e.set_thumbnail(url=alvo.display_avatar.url)
-        await self.parte_steam(e, alvo)
+        proprio = alvo.id == interaction.user.id
+        perms = getattr(interaction.user, "guild_permissions", None)
+        admin = bool(perms and perms.manage_guild)
+        await self.parte_steam(e, alvo, proprio, admin)
         self.parte_servidor(e, interaction.guild_id, alvo.id)
         e.set_footer(text="Horas e jogos da Steam · o resto é das maratonas deste servidor")
-        if alvo.id == interaction.user.id:  # no seu próprio perfil: botões da Steam
+        if proprio or admin:  # botões da Steam: no seu perfil, ou para admins no perfil dos outros
             vinculada = alvo.id in self.db.contas_steam([alvo.id])
-            await interaction.followup.send(embed=e, view=PerfilView(self, alvo.id, vinculada),
+            await interaction.followup.send(embed=e, view=PerfilView(self, interaction.user.id, alvo, vinculada),
                                             allowed_mentions=SEM_PING)
         else:
             await interaction.followup.send(embed=e, allowed_mentions=SEM_PING)
 
-    async def parte_steam(self, e: discord.Embed, alvo: discord.abc.User) -> None:
+    async def parte_steam(self, e: discord.Embed, alvo: discord.abc.User,
+                          proprio: bool = True, admin: bool = False) -> None:
         steam = self.bot.get_cog("SteamCog")
         conta = self.db.contas_steam([alvo.id]).get(alvo.id)
         if conta is None:
-            e.description = "Sem Steam vinculada, então não sei das horas nem dos jogos. Clique em **🔗 Vincular Steam** aqui embaixo! 🎮"
+            if proprio:
+                dica = "Clique em **🔗 Vincular Steam** aqui embaixo! 🎮"
+            elif admin:
+                dica = "Como você é admin, pode vincular por essa pessoa no botão aqui embaixo. 🎮"
+            else:
+                dica = f"Só {alvo.mention} pode vincular a própria Steam, usando `/perfil` (sem marcar ninguém). 🎮"
+            e.description = f"Sem Steam vinculada, então não sei das horas nem dos jogos. {dica}"
             return
         if steam is not None and steam.api is not None:
             try:

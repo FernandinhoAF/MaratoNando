@@ -485,9 +485,48 @@ class SteamCog(commands.Cog):
         e = discord.Embed(title="🎮 Contas da Steam" + (" da maratona" if m else ""), color=COR_STEAM,
                           description=juntar(linhas, limite=4000))
         if any(c is None or not c["publico"] for c in (contas.get(u) for u in pessoas)):
-            e.set_footer(text="Cada um vincula a sua pelo /perfil. Admins podem vincular pelos outros: "
-                              "/config steam pessoa:@alguém perfil:<link>")
-        await interaction.response.send_message(embed=e, ephemeral=True, allowed_mentions=SEM_PING)
+            e.set_footer(text="Cada um vincula a sua no botão aqui embaixo (ou no /perfil). "
+                              "Admins vinculam pelos outros no /perfil da pessoa.")
+        vinculada = interaction.user.id in self.db.contas_steam([interaction.user.id])
+        await interaction.response.send_message(embed=e, view=VincularView(self, vinculada),
+                                                ephemeral=True, allowed_mentions=SEM_PING)
+
+
+class SteamModal(discord.ui.Modal, title="Vincular a sua Steam"):
+    """Pede o link do perfil da Steam. Com `pessoa`, é um admin vinculando por outra pessoa."""
+
+    perfil = discord.ui.TextInput(label="Link do seu perfil na Steam",
+                                  placeholder="https://steamcommunity.com/id/seunome", max_length=200)
+
+    def __init__(self, steam: "SteamCog", pessoa: Optional[discord.Member] = None) -> None:
+        super().__init__()
+        self.steam, self.pessoa = steam, pessoa
+        if pessoa is not None:
+            self.title = f"Vincular a Steam de {pessoa.display_name}"[:45]
+            self.perfil.label = "Link do perfil dessa pessoa na Steam"
+
+    async def on_error(self, interaction, erro) -> None:
+        await tratar_erro(interaction, erro)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.steam.vincular(interaction, self.perfil.value.strip(), self.pessoa)
+
+
+class VincularView(discord.ui.View):
+    """Botão "Vincular a minha Steam" embaixo da lista de contas (menu "Mais…" do painel)."""
+
+    def __init__(self, steam: "SteamCog", vinculada: bool) -> None:
+        super().__init__(timeout=900)
+        self.steam = steam
+        if vinculada:
+            self.vincular.label, self.vincular.emoji = "Trocar a minha Steam", "🔄"
+
+    async def on_error(self, interaction, erro, item) -> None:
+        await tratar_erro(interaction, erro)
+
+    @discord.ui.button(label="Vincular a minha Steam", emoji="🔗", style=discord.ButtonStyle.primary)
+    async def vincular(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interaction.response.send_modal(SteamModal(self.steam))
 
 
 async def setup(bot: commands.Bot) -> None:

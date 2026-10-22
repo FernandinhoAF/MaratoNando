@@ -177,7 +177,9 @@ class SteamCog(commands.Cog):
         if jogos is None:
             self.db.salvar_biblioteca(user_id, False, [])
             return None
-        self.db.salvar_biblioteca(user_id, True, [int(j["appid"]) for j in jogos])
+        self.db.salvar_biblioteca(user_id, True, [int(j["appid"]) for j in jogos],
+                                  {int(j["appid"]): (int(j.get("playtime_forever") or 0), int(j.get("playtime_2weeks") or 0))
+                                   for j in jogos})
         self.db.catalogo_adicionar([(int(j["appid"]), j["name"]) for j in jogos if j.get("name")])
         try:  # a lista de desejos da Steam vem junto (se for privada, fica vazia e tudo bem)
             self.db.salvar_desejos(user_id, await self.exigir_api().desejos(steamid))
@@ -196,8 +198,9 @@ class SteamCog(commands.Cog):
         async with self.analisando:
             conhecidos = self.db.apps(appids)
             com_jogadores = self.db.jogadores_de(appids)  # já leu quantas pessoas o jogo aceita?
+            com_generos = self.db.generos_de(appids)      # e os gêneros?
             faltam = [a for a in appids
-                      if a not in conhecidos or a not in com_jogadores
+                      if a not in conhecidos or a not in com_jogadores or a not in com_generos
                       or antes_de(conhecidos[a]["verificado_em"], days=LOJA_VALIDA_DIAS)]
             for n, appid in enumerate(faltam[:limite], start=1):
                 detalhes = await self.loja.detalhes(appid)
@@ -205,6 +208,8 @@ class SteamCog(commands.Cog):
                 self.db.salvar_app(app_de_detalhes(appid, detalhes, agora(), nome))
                 if detalhes:
                     self.db.salvar_jogadores_steam(appid, extrair_de_detalhes(detalhes))
+                    self.db.salvar_generos(appid, [g.get("description", "") for g in detalhes.get("genres", [])
+                                                   if g.get("description")])
                 if progresso and n % 10 == 0:
                     await progresso(n, min(len(faltam), limite))
                 await asyncio.sleep(PAUSA)

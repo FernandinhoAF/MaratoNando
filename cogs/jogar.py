@@ -20,12 +20,13 @@ from discord import app_commands
 from discord.ext import commands
 
 import ficha
+import perfil
 from biblioteca import Opcao, app_da_linha, calcular_opcoes, escolher_candidatos, reais
 from cogs.maratona import SEM_PING, autocompletar_jogo, juntar, plural, texto_resultado, tratar_erro
 from notas import estrelas, numero
 from db import Database, ErroMaratona
 from jogadores import cabe, faixa_texto
-from marca import COR_DETALHE, url_nando
+from marca import COR_DETALHE, COR_PAINEL, url_nando
 from nomes import ler_escolha
 from radar import PRECO_MAX_PADRAO
 from servicos.steam import ErroSteam
@@ -298,6 +299,99 @@ class JogarCog(commands.Cog):
             nota = f" · ⭐ {estrelas(media)} {numero(media)} ({plural(quantas, 'nota', 'notas')})" if quantas else ""
             linhas.append(f"🎰 Saiu em {plural(vezes, 'maratona', 'maratonas')}{nota}")
         return juntar(linhas)
+
+    # ---- /perfil -------------------------------------------------------
+
+    @app_commands.command(name="perfil", description="Perfil gamer: horas, mais jogados e gêneros favoritos na Steam, "
+                                                     "e os números nas maratonas.")
+    @app_commands.describe(pessoa="De quem (vazio = você)")
+    @app_commands.guild_only()
+    async def cmd_perfil(self, interaction: discord.Interaction, pessoa: Optional[discord.Member] = None) -> None:
+        alvo = pessoa or interaction.user
+        if alvo.bot:
+            raise ErroMaratona("Bots não têm perfil gamer. A gente só sorteia. 🤖")
+        await interaction.response.defer(thinking=True)
+        e = discord.Embed(title=f"🎮 Perfil de {alvo.display_name}", color=COR_PAINEL)
+        e.set_thumbnail(url=alvo.display_avatar.url)
+        await self.parte_steam(e, alvo)
+        self.parte_servidor(e, interaction.guild_id, alvo.id)
+        e.set_footer(text="Horas e jogos da Steam · o resto é das maratonas deste servidor")
+        await interaction.followup.send(embed=e, allowed_mentions=SEM_PING)
+
+    async def parte_steam(self, e: discord.Embed, alvo: discord.abc.User) -> None:
+        steam = self.bot.get_cog("SteamCog")
+        conta = self.db.contas_steam([alvo.id]).get(alvo.id)
+        if conta is None:
+            e.description = "Sem Steam vinculada, então não sei das horas nem dos jogos. Use `/steam vincular`! 🎮"
+            return
+        if steam is not None and steam.api is not None:
+            try:
+                await steam.atualizar_bibliotecas([alvo.id])
+                biblioteca = self.db.biblioteca_com_tempo(alvo.id)
+                if biblioteca and not any(m for _, m, _ in biblioteca):
+                    # biblioteca lida antes do bot guardar as horas: lê de novo uma vez
+                    await steam.ler_biblioteca(alvo.id, conta["steamid"])
+            except Exception as exc:
+                log.info("Não consegui atualizar a biblioteca de %s: %s", alvo.id, exc)
+            conta = self.db.contas_steam([alvo.id])[alvo.id]
+        link = f"[Perfil na Steam](https://steamcommunity.com/profiles/{conta['steamid']})"
+        if not conta["publico"]:
+            e.description = f"{link} · os jogos dessa conta estão **privados**, então não dá para ver as horas."
+            return
+        biblioteca = self.db.biblioteca_com_tempo(alvo.id)
+        total = sum(m for _, m, _ in biblioteca)
+        recente = sum(m for _, _, m in biblioteca)
+        abertos = sum(1 for _, m, _ in biblioteca if m)
+        e.description = (f"{link} · **{perfil.horas(total)}** jogadas em {plural(len(biblioteca), 'jogo', 'jogos')} "
+                         f"({abertos} já abertos)"
+                         + (f"\n**{perfil.horas(recente)}** nas últimas 2 semanas" if recente else ""))
+
+        top = perfil.mais_jogados(biblioteca, perfil.JOGOS_PARA_GENEROS)
+        if steam is not None:
+            try:
+                await steam.analisar_na_loja([a for a, _ in top], perfil.JOGOS_PARA_GENEROS)  # gêneros e nomes
+            except Exception as exc:
+                log.info("Loja indisponível para o perfil: %s", exc)
+
+        def nome(appid: int) -> str:
+            return self.db.nome_conhecido(appid) or f"Jogo {appid}"
+
+        if top:
+            e.add_field(name="🏆 Mais jogados", value="\n".join(
+                f"**{nome(a)}** — {perfil.horas(m)}" for a, m in top[:5]))
+        recentes = perfil.mais_jogados(biblioteca, 3, recentes=True)
+        if recentes:
+            e.add_field(name="🔥 Jogando ultimamente", value="\n".join(
+                f"**{nome(a)}** — {perfil.horas(m)}" for a, m in recentes))
+        generos = perfil.generos_favoritos(biblioteca, self.db.generos_de([a for a, _ in top]))
+        if generos:
+            e.add_field(name="🏷️ Gêneros favoritos (pelo tempo jogado)",
+                        value=" · ".join(f"**{g}** {pct}%" for g, pct in generos), inline=False)
+
+    def parte_servidor(self, e: discord.Embed, guild_id: int, user_id: int) -> None:
+        p = self.db.perfil_no_servidor(guild_id, user_id)
+        linhas = []
+        if p["maratonas"]:
+            linhas.append(f"🎰 {plural(p['maratonas'], 'maratona', 'maratonas')} · colocou "
+                          f"{plural(p['colocou'], 'jogo', 'jogos')} na roleta ({p['sairam']} "
+                          f"{'saiu' if p['sairam'] == 1 else 'saíram'})")
+        else:
+            linhas.append("🎰 Ainda não jogou nenhuma maratona aqui.")
+        if p["notas"]:
+            favorito = f" · favorito: **{p['favorito']}**" if p["favorito"] else ""
+            linhas.append(f"⭐ Deu {plural(p['notas'], 'nota', 'notas')}, média {numero(p['media_notas'])}{favorito}")
+        if p["reclamacoes"]:
+            linhas.append(f"😤 {plural(p['reclamacoes'], 'reclamação', 'reclamações')} no Mural da Vergonha")
+        else:
+            linhas.append("😇 Nunca foi pro Mural da Vergonha")
+        querem = []
+        if p["lista"]:
+            querem.append(f"{plural(p['lista'], 'jogo', 'jogos')} na /lista")
+        if p["desejos_steam"]:
+            querem.append(f"{p['desejos_steam']} na lista de desejos da Steam")
+        if querem:
+            linhas.append("📝 " + " · ".join(querem))
+        e.add_field(name="🏠 Nas maratonas daqui", value="\n".join(linhas), inline=False)
 
     # ---- /jogo jogadores ---------------------------------------------
 

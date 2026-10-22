@@ -206,6 +206,12 @@ CREATE TABLE IF NOT EXISTS steam_biblioteca (
     PRIMARY KEY (user_id, appid)
 );
 
+-- Gêneros de cada jogo na loja da Steam (em inglês, como a loja manda; o /perfil traduz).
+CREATE TABLE IF NOT EXISTS steam_generos (
+    appid   INTEGER PRIMARY KEY,
+    generos TEXT    NOT NULL  -- separados por "|" (vazio = a loja não informa)
+);
+
 -- Lista de desejos da Steam de quem vinculou a conta (lida junto com a biblioteca).
 CREATE TABLE IF NOT EXISTS steam_desejos (
     user_id INTEGER NOT NULL,
@@ -322,6 +328,8 @@ MIGRACOES = [
     ("chamados", "inicio", "TEXT"),                      # horário marcado no /chamar (ISO, UTC); NULL = agora
     ("chamados", "lembrado", "INTEGER NOT NULL DEFAULT 0"),  # já avisou "hora de jogar"?
     ("chamado_respostas", "ordem", "INTEGER"),           # ordem dos cliques (decide a fila de espera)
+    ("steam_biblioteca", "minutos", "INTEGER NOT NULL DEFAULT 0"),       # tempo de jogo total
+    ("steam_biblioteca", "minutos_2sem", "INTEGER NOT NULL DEFAULT 0"),  # tempo nas últimas 2 semanas
     ("maratonas", "modo", "TEXT NOT NULL DEFAULT 'livre'"),  # modo da roleta (modos.py)
     ("maratonas", "modo_preco", "INTEGER"),              # preço máximo do modo "ate_preco", em centavos
 ]
@@ -1424,15 +1432,62 @@ class Database:
         rows = self.conn.execute(f"SELECT * FROM steam_contas WHERE user_id IN ({marcas})", tuple(user_ids))
         return {r["user_id"]: r for r in rows}
 
-    def salvar_biblioteca(self, user_id: int, publico: bool, appids: list[int]) -> None:
+    def salvar_biblioteca(self, user_id: int, publico: bool, appids: list[int],
+                          tempos: dict[int, tuple[int, int]] | None = None) -> None:
+        """tempos: {appid: (minutos no total, minutos nas últimas 2 semanas)}."""
+        tempos = tempos or {}
         with self.conn:
             self.conn.execute("DELETE FROM steam_biblioteca WHERE user_id = ?", (user_id,))
-            self.conn.executemany("INSERT OR IGNORE INTO steam_biblioteca (user_id, appid) VALUES (?, ?)",
-                                  [(user_id, a) for a in appids])
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO steam_biblioteca (user_id, appid, minutos, minutos_2sem) VALUES (?, ?, ?, ?)",
+                [(user_id, a, *tempos.get(a, (0, 0))) for a in appids])
             self.conn.execute(
                 "UPDATE steam_contas SET publico = ?, total_jogos = ?, atualizado_em = ? WHERE user_id = ?",
                 (int(publico), len(appids), agora(), user_id),
             )
+
+    def biblioteca_com_tempo(self, user_id: int) -> list[tuple[int, int, int]]:
+        """[(appid, minutos no total, minutos nas últimas 2 semanas)] da conta da pessoa."""
+        rows = self.conn.execute(
+            "SELECT appid, minutos, minutos_2sem FROM steam_biblioteca WHERE user_id = ?", (user_id,)).fetchall()
+        return [(r[0], r[1], r[2]) for r in rows]
+
+    def salvar_generos(self, appid: int, generos: list[str]) -> None:
+        with self.conn:
+            self.conn.execute("INSERT OR REPLACE INTO steam_generos (appid, generos) VALUES (?, ?)",
+                              (appid, "|".join(generos)))
+
+    def generos_de(self, appids: list[int]) -> dict[int, list[str]]:
+        """{appid: [gêneros]} dos jogos que o bot já olhou na loja."""
+        marcas = ", ".join("?" for _ in appids) or "NULL"
+        rows = self.conn.execute(f"SELECT appid, generos FROM steam_generos WHERE appid IN ({marcas})", tuple(appids))
+        return {r[0]: [g for g in r[1].split("|") if g] for r in rows}
+
+    def perfil_no_servidor(self, guild_id: int, user_id: int) -> dict:
+        """Números da pessoa nas maratonas deste servidor (para o /perfil)."""
+        q = self.conn.execute
+        maratonas = q(
+            "SELECT COUNT(*) FROM maratonas m WHERE m.guild_id = ? AND ("
+            " EXISTS (SELECT 1 FROM jogos j WHERE j.maratona_id = m.id AND j.user_id = ?)"
+            " OR EXISTS (SELECT 1 FROM maratona_extras e WHERE e.maratona_id = m.id AND e.user_id = ?))",
+            (guild_id, user_id, user_id)).fetchone()[0]
+        colocou, sairam = q(
+            "SELECT COUNT(*), COUNT(j.ordem) FROM jogos j JOIN maratonas m ON m.id = j.maratona_id"
+            " WHERE m.guild_id = ? AND j.user_id = ?", (guild_id, user_id)).fetchone()
+        reclamacoes = q(
+            "SELECT COUNT(*) FROM reclamacoes r JOIN maratonas m ON m.id = r.maratona_id"
+            " WHERE m.guild_id = ? AND r.user_id = ?", (guild_id, user_id)).fetchone()[0]
+        notas = q(
+            "SELECT j.nome, n.nota FROM notas n JOIN jogos j ON j.id = n.jogo_id JOIN maratonas m ON m.id = j.maratona_id"
+            " WHERE m.guild_id = ? AND n.user_id = ? ORDER BY n.nota DESC, n.dada_em DESC", (guild_id, user_id)).fetchall()
+        lista = q("SELECT COUNT(*) FROM lista_pessoal WHERE user_id = ?", (user_id,)).fetchone()[0]
+        desejos = q("SELECT COUNT(*) FROM steam_desejos WHERE user_id = ?", (user_id,)).fetchone()[0]
+        return {
+            "maratonas": maratonas, "colocou": colocou, "sairam": sairam, "reclamacoes": reclamacoes,
+            "notas": len(notas), "media_notas": (sum(r[1] for r in notas) / len(notas)) if notas else None,
+            "favorito": notas[0][0] if notas and notas[0][1] >= 4 else None,
+            "lista": lista, "desejos_steam": desejos,
+        }
 
     def bibliotecas(self, user_ids: list[int]) -> dict[int, set[int]]:
         """{user_id: {appids}} só de quem tem conta vinculada com jogos visíveis."""

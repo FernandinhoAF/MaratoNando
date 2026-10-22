@@ -71,6 +71,14 @@ class SteamClient:
         dados = await self._json(URL_LOJA, params)
         return ler_resultados(dados.get("results_html", ""))
 
+    async def gratis_para_sempre(self) -> list[ItemLoja]:
+        """Promoções que custam R$ 0 agora (qualquer jogo, sem o filtro de co-op). O 100% off é filtrado
+        depois (gratis.ler_steam), para não confundir com os free-to-play de sempre."""
+        params = {"infinite": "1", "category1": "998", "specials": "1", "maxprice": "free",
+                  "cc": self.pais, "l": "english", "count": "50", "start": "0"}
+        dados = await self._json(URL_LOJA, params)
+        return ler_resultados(dados.get("results_html", ""))
+
     async def preco(self, appid: int) -> dict | None:
         """Só o preço de um jogo (bem mais leve que os detalhes completos).
 

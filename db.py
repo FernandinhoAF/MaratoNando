@@ -249,6 +249,14 @@ CREATE TABLE IF NOT EXISTS catalogo (
     nome  TEXT NOT NULL
 );
 
+-- Jogos grátis (Epic/Steam) que já foram avisados em cada servidor (para não avisar duas vezes).
+CREATE TABLE IF NOT EXISTS gratis_avisados (
+    guild_id   INTEGER NOT NULL,
+    chave      TEXT    NOT NULL,  -- loja:id:início da promoção
+    avisado_em TEXT    NOT NULL,
+    PRIMARY KEY (guild_id, chave)
+);
+
 -- Quantas pessoas cada jogo da Steam aceita (/o-que-jogar).
 -- fonte 'steam' = lido da descrição da loja (minimo/maximo NULL = a descrição não diz);
 -- fonte 'grupo' = alguém ensinou com /jogo jogadores, e isso nunca é sobrescrito pela Steam.
@@ -303,6 +311,7 @@ MIGRACOES = [
     ("limpeza_config", "ultimo_ping_cargo", "TEXT"),     # quando o bot marcou esse cargo pela última vez
     ("jogos", "appid", "INTEGER"),                       # jogo da Steam (quando o bot reconheceu)
     ("jogos", "nota_pedida_em", "TEXT"),                 # quando o bot postou os botões de nota deste jogo
+    ("limpeza_config", "avisar_gratis", "INTEGER NOT NULL DEFAULT 1"),  # avisar jogos grátis (Epic/Steam)
     ("maratonas", "modo", "TEXT NOT NULL DEFAULT 'livre'"),  # modo da roleta (modos.py)
     ("maratonas", "modo_preco", "INTEGER"),              # preço máximo do modo "ate_preco", em centavos
 ]
@@ -1203,6 +1212,39 @@ class Database:
                 "INSERT INTO limpeza_config (guild_id, avisar_promocoes) VALUES (?, ?)"
                 " ON CONFLICT (guild_id) DO UPDATE SET avisar_promocoes = excluded.avisar_promocoes",
                 (guild_id, int(ativo)),
+            )
+
+    def avisar_gratis(self, guild_id: int) -> bool:
+        row = self.conn.execute("SELECT avisar_gratis FROM limpeza_config WHERE guild_id = ?",
+                                (guild_id,)).fetchone()
+        return True if row is None else bool(row[0])
+
+    def definir_avisar_gratis(self, guild_id: int, ativo: bool) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO limpeza_config (guild_id, avisar_gratis) VALUES (?, ?)"
+                " ON CONFLICT (guild_id) DO UPDATE SET avisar_gratis = excluded.avisar_gratis",
+                (guild_id, int(ativo)),
+            )
+
+    def servidores_para_gratis(self) -> list[tuple[int, int]]:
+        """[(guild_id, canal do bot)] dos servidores que querem os avisos de jogos grátis."""
+        rows = self.conn.execute(
+            "SELECT guild_id, canal_bot FROM limpeza_config WHERE canal_bot IS NOT NULL AND avisar_gratis = 1"
+        ).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+    def gratis_novos(self, guild_id: int, chaves: list[str]) -> list[str]:
+        """Das promoções grátis, quais ainda não foram avisadas neste servidor."""
+        avisadas = {r[0] for r in self.conn.execute(
+            "SELECT chave FROM gratis_avisados WHERE guild_id = ?", (guild_id,))}
+        return [c for c in chaves if c not in avisadas]
+
+    def marcar_gratis_avisados(self, guild_id: int, chaves: list[str]) -> None:
+        with self.conn:
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO gratis_avisados (guild_id, chave, avisado_em) VALUES (?, ?, ?)",
+                [(guild_id, c, agora()) for c in chaves],
             )
 
     def servidores_para_promocoes(self) -> list[tuple[int, int]]:

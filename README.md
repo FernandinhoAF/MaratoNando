@@ -20,6 +20,7 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 - **🎮 O que jogar agora?** (`/o-que-jogar`): "estamos em 4, o que dá para jogar?", com ou sem maratona. O bot pega quem está na sua call (ou quem você marcar, ou só o número de pessoas) e sugere: os jogos **que vocês já têm** na Steam e que aceitam exatamente esse número de pessoas, do mais barato para o grupo ao mais caro; e **novidades friendslop** da loja que também servem. Quantas pessoas cada jogo aceita vem da descrição da Steam ("up to 6 players", "1-4 players", "até 4 jogadores"…). Quando a descrição não diz (ou diz errado), qualquer um ensina com `/jogo jogadores` (ex.: Lethal Company = 1 a 4), e o que o grupo ensina vale para sempre.
 - **👥 Sorteio de times** (`/times`): começa a lista com quem está jogando a maratona (ou, sem maratona aberta, com quem está na call), pergunta se mais alguém vai jogar e só então sorteia times equilibrados.
 - **🧹 Chat limpo**: com `/config canal-do-bot`, o bot ganha um canal próprio onde as mensagens ficam. Em qualquer outro canal, as mensagens dele somem sozinhas depois de alguns minutos (padrão: 10). Se alguém estiver usando os botões de uma mensagem, o prazo recomeça; e o painel de uma maratona aberta só some depois que ela acaba.
+- **🎁 Jogos grátis** (`/gratis`): o grátis da semana da **Epic Games** (e os próximos) e os jogos **100% off da Steam** (de graça para sempre, não os free-to-play de sempre), com imagem, até quando vale e quanto custaria. A cada 3 horas o bot confere e, quando aparece jogo grátis novo, avisa no canal do bot, sem marcar ninguém e sem repetir. Liga/desliga com `/config gratis`.
 - **💸 Avisos de promoção**: a cada 6 horas o bot confere na Steam o preço dos jogos que estão nas listas pessoais. Quando um deles entra em promoção (ou o desconto aumenta), ele avisa no canal do bot marcando (com notificação) só quem tem aquele jogo na lista. O `/lista ver` também mostra quais jogos da sua lista estão em promoção.
 - **💰 Mais barato para o grupo** (`/maratona baratos`): cada pessoa vincula a Steam (ou um admin vincula por ela), e o bot cruza as bibliotecas de quem está jogando a maratona. Mostra os jogos multiplayer do mais barato para o grupo ao mais caro: o custo é o preço atual × quantas pessoas ainda não têm. Primeiro aparecem os que todo mundo já tem e os grátis. O mesmo cálculo aparece **no sorteio** ("✅ 3 têm · 🛒 falta para @Bia, R$ 14,87") e, só para quem está colocando, **ao colocar um jogo na roleta**, para todo mundo pensar no bolso dos amigos.
 - **🎯 Modos da roleta** (`/maratona modo`, ou o `modo` do `/maratona criar`): quem organizou escolhe quais jogos podem sair no sorteio. **✅ Ninguém precisa comprar**: só saem jogos que todo mundo (com Steam vinculada) já tem, ou que são grátis. **💸 Só até R$ X**: só saem jogos que custam até esse valor para quem ainda não tem. **🎲 Livre**: qualquer jogo (o normal). Com um modo ligado, a roleta aparece na hora e o bot confere na Steam, enquanto ela gira, quais jogos valem; os que não valem continuam na roleta e voltam a valer se o modo mudar. Jogos que não dá para conferir na Steam (de fora da Steam, sem preço no Brasil) ficam de fora, para ninguém ser pego de surpresa pagando. O painel e a revelação mostram o modo e quantos jogos ficaram de fora.
@@ -61,12 +62,14 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 | `/o-que-jogar [pessoas] [jogadores] [preco_max]` | Jogos para o número exato de pessoas: o que vocês já têm (mais barato para o grupo primeiro) e novidades da loja | Qualquer pessoa |
 | `/jogo ver jogo` | Ficha do jogo: preço, avaliações, nº de jogadores, modos e quem do servidor tem, com botões de lista e roleta | Qualquer pessoa |
 | `/jogo jogadores jogo [maximo] [minimo]` | Mostra quantas pessoas um jogo aceita, ou ensina o bot (o que o grupo ensina vale mais que a Steam) | Qualquer pessoa |
+| `/gratis` | Jogos grátis para resgatar agora (Epic e Steam) e os próximos grátis da Epic | Qualquer pessoa |
 | `/sugestao [tipo]` | Sugestões de friendslop só pela Steam: em alta, novidades ou em promoção | Qualquer pessoa |
 | `/sortear-times [quantidade] [jogadores]` | Sorteia times sem ligação com a maratona: marque as pessoas (`@Ana @Bia…`) para sortear na hora, ou deixe vazio para começar com quem está na sua call | Qualquer pessoa (só quem pediu sorteia) |
 | `/times [quantidade]` | Monta a lista de quem vai jogar (maratona primeiro, call depois) e sorteia os times (2 a 8) | Qualquer pessoa (só quem pediu sorteia) |
 | `/config canal-do-bot [canal]` | Define o canal do bot; fora dele, as mensagens do bot somem sozinhas (vazio = desliga) | Quem tem *Gerenciar servidor* |
 | `/config apagar-depois minutos` | Quanto tempo as mensagens ficam fora do canal do bot (0 = nunca apagar) | Quem tem *Gerenciar servidor* |
 | `/config promocoes ativo` | Liga/desliga os avisos de promoção (vão para o canal do bot) | Quem tem *Gerenciar servidor* |
+| `/config gratis ativo` | Liga/desliga o aviso de jogos grátis (vai para o canal do bot) | Quem tem *Gerenciar servidor* |
 | `/config cargo-jogos [cargo]` | Cargo marcado ao abrir maratona e no `/chamar` (vazio = ninguém) | Quem tem *Gerenciar servidor* |
 | `/config ver` | Mostra as configurações | Quem tem *Gerenciar servidor* |
 | `/radar ver` | Mostra as sugestões de jogos, com menu para salvar na sua lista | Qualquer pessoa |
@@ -197,6 +200,7 @@ MaratoNando/
 ├── times.py           # divisão equilibrada em times
 ├── biblioteca.py      # custo para o grupo: cruza as bibliotecas da Steam
 ├── nomes.py           # nomes parecidos, repetidos e o "você quis dizer…?"
+├── gratis.py          # jogos grátis: leitura da Epic e dos 100% off da Steam
 ├── ficha.py           # textos da ficha do jogo (/jogo ver)
 ├── modos.py           # modos da roleta: quais jogos podem sair no sorteio
 ├── jogadores.py       # quantas pessoas cada jogo aceita, lido da descrição da Steam
@@ -214,12 +218,14 @@ MaratoNando/
 │   ├── promocoes.py   # vigia de promoções dos jogos das listas
 │   ├── steam.py       # /steam e o /maratona baratos
 │   ├── chamar.py      # /chamar
+│   ├── gratis.py      # /gratis e o aviso automático de jogos grátis
 │   ├── jogar.py       # /o-que-jogar, /jogo ver e /jogo jogadores
 │   └── agenda.py      # /maratona agendar: convite, evento do calendário e abertura automática
 ├── servicos/
 │   ├── twitch.py      # cliente da API oficial da Twitch
 │   ├── steam.py       # consultas à loja da Steam
-│   └── steam_api.py   # API oficial da Steam (perfis e bibliotecas)
+│   ├── steam_api.py   # API oficial da Steam (perfis e bibliotecas)
+│   └── epic.py        # lista pública de jogos grátis da Epic Games
 ├── tests/
 │   ├── test_db.py     # testes da maratona e da lista
 │   ├── test_radar.py  # testes do radar (com respostas reais da Steam)
@@ -230,6 +236,7 @@ MaratoNando/
 │   ├── test_biblioteca.py # testes do custo para o grupo e das contas Steam
 │   ├── test_chamar.py # testes do cargo de jogos e do /chamar
 │   ├── test_nomes.py  # testes de nomes digitados com erro e repetidos
+│   ├── test_gratis.py # testes dos jogos grátis (com a resposta real da Epic)
 │   ├── test_ficha.py  # testes da ficha do jogo
 │   ├── test_modos.py  # testes dos modos da roleta
 │   ├── test_jogadores.py # testes da leitura do nº de jogadores (com textos reais da Steam)
@@ -243,7 +250,7 @@ MaratoNando/
 └── discloud.config
 ```
 
-A separação é proposital: `db.py` e `radar.py` não sabem nada de Discord nem de internet (só recebem e devolvem dados), então as regras podem ser testadas sozinhas. Os `cogs/` cuidam da conversa com o Discord, e os `servicos/` da conversa com a Twitch e a Steam.
+A separação é proposital: `db.py` e `radar.py` não sabem nada de Discord nem de internet (só recebem e devolvem dados), então as regras podem ser testadas sozinhas. Os `cogs/` cuidam da conversa com o Discord, e os `servicos/` da conversa com a Twitch, a Steam e a Epic.
 
 ## Tecnologias
 

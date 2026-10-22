@@ -127,6 +127,9 @@ class LimpezaCog(commands.Cog):
         e.add_field(name="Avisos de promoção", value=(
             "Ligados" if self.db.avisar_promocoes(guild_id) and canal_bot
             else "Ligados, mas precisam do canal do bot" if self.db.avisar_promocoes(guild_id) else "Desligados"))
+        e.add_field(name="Avisos de jogos grátis", value=(
+            "Ligados" if self.db.avisar_gratis(guild_id) and canal_bot
+            else "Ligados, mas precisam do canal do bot" if self.db.avisar_gratis(guild_id) else "Desligados"))
         if canal_bot and minutos:
             e.description = (f"Em <#{canal_bot}> as mensagens do bot ficam. Em qualquer outro canal, elas somem "
                              f"{minutos} min depois da última vez que alguém mexeu nelas. "
@@ -153,6 +156,13 @@ class LimpezaCog(commands.Cog):
     @app_commands.describe(ativo="Avisar quando um jogo das listas entrar em promoção na Steam?")
     async def cmd_promocoes(self, interaction: discord.Interaction, ativo: bool) -> None:
         self.db.definir_avisar_promocoes(interaction.guild_id, ativo)
+        await interaction.response.send_message(embed=self.embed_config(interaction.guild_id), ephemeral=True)
+
+    @config.command(name="gratis",
+                    description="Liga/desliga o aviso de jogos grátis da Epic e da Steam (vai para o canal do bot).")
+    @app_commands.describe(ativo="Avisar quando aparecer jogo grátis para resgatar?")
+    async def cmd_gratis(self, interaction: discord.Interaction, ativo: bool) -> None:
+        self.db.definir_avisar_gratis(interaction.guild_id, ativo)
         await interaction.response.send_message(embed=self.embed_config(interaction.guild_id), ephemeral=True)
 
     @config.command(name="cargo-jogos",

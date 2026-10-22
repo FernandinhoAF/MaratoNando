@@ -1,12 +1,18 @@
-"""/o-que-jogar: "estamos em 4, o que dá para jogar?" (com ou sem maratona).
+"""Comandos de jogos fora da maratona: /o-que-jogar, /jogo e /perfil.
 
-  • Junta quem vai jogar: as pessoas marcadas, ou quem está na sua call.
+/o-que-jogar: "estamos em 4, o que dá para jogar?" (com ou sem maratona).
+  • Junta quem vai jogar: as pessoas marcadas, ou quem está na sua call (ou o número do menu).
   • 🎮 Do que vocês têm: jogos das bibliotecas da Steam (e das listas) que aceitam esse
     número de pessoas, do mais barato para o grupo ao mais caro.
   • 🆕 Novidades: friendslop em alta na loja que aceita esse número de pessoas.
+  • Botões para as outras sugestões: 🔥 em alta / 🆕 novidades / 💸 promoções da Steam,
+    🎁 jogos grátis e 📡 radar dos streamers.
 
 Quantas pessoas cada jogo aceita vem da descrição da Steam (jogadores.py). Quando a
-descrição não diz, ou diz errado, qualquer um ensina com /jogo jogadores.
+descrição não diz, ou diz errado, qualquer um ensina pelo botão 👥 da ficha do /jogo.
+
+/jogo: ficha do jogo, com botões de lista, roleta e nº de jogadores.
+/perfil: perfil gamer, com os botões para vincular ou desvincular a Steam.
 """
 
 import asyncio
@@ -54,8 +60,34 @@ def custo_texto(o: Opcao) -> str:
     return f"{tem} · 🛒 {reais(o.custo)} para o resto"
 
 
+class JogadoresModal(discord.ui.Modal, title="Quantas pessoas jogam?"):
+    minimo = discord.ui.TextInput(label="Mínimo de jogadores", placeholder="1", required=False, max_length=3)
+    maximo = discord.ui.TextInput(label="Máximo de jogadores", placeholder="4", max_length=3)
+
+    def __init__(self, cog: "JogarCog", appid: int, nome: str) -> None:
+        super().__init__(title=f"Quantas pessoas jogam {nome}?"[:45])
+        self.cog, self.appid, self.nome = cog, appid, nome
+
+    async def on_error(self, interaction, erro) -> None:
+        await tratar_erro(interaction, erro)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            minimo = int(self.minimo.value or 1)
+            maximo = int(self.maximo.value)
+        except ValueError:
+            raise ErroMaratona("Escreva só números (ex.: mínimo 1, máximo 4).") from None
+        if maximo > 100:
+            raise ErroMaratona("Máximo de 100 jogadores.")
+        self.cog.db.definir_jogadores_grupo(self.appid, minimo, maximo, interaction.user.id)
+        await interaction.response.send_message(
+            f"✅ Anotado: **{self.nome}** é de {faixa_texto((minimo, maximo))}. "
+            "O `/o-que-jogar` já usa isso para todo mundo.", allowed_mentions=SEM_PING)
+
+
 class FichaView(discord.ui.View):
-    """Botões da ficha: salvar na lista, colocar na roleta (se tiver maratona aberta) e abrir na Steam."""
+    """Botões da ficha: salvar na lista, colocar na roleta (se tiver maratona aberta), corrigir o
+    número de jogadores e abrir na Steam."""
 
     def __init__(self, cog: "JogarCog", appid: int, nome: str, com_roleta: bool) -> None:
         super().__init__(timeout=1800)
@@ -91,16 +123,107 @@ class FichaView(discord.ui.View):
         if adicionados and maratona_cog is not None:
             await maratona_cog.atualizar_painel(m.id)
 
+    @discord.ui.button(label="Nº de jogadores", emoji="👥", style=discord.ButtonStyle.secondary)
+    async def jogadores(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        """A Steam não diz (ou diz errado) quantas pessoas jogam: qualquer um ensina o bot."""
+        await interaction.response.send_modal(JogadoresModal(self.cog, self.appid, self.nome))
+
+
+class OQueJogarView(discord.ui.View):
+    """Menu de quantas pessoas + botões das outras sugestões (embaixo do /o-que-jogar)."""
+
+    def __init__(self, cog: "JogarCog", preco_centavos: int) -> None:
+        super().__init__(timeout=1800)
+        self.cog, self.preco = cog, preco_centavos
+
+    async def on_error(self, interaction, erro, item) -> None:
+        await tratar_erro(interaction, erro)
+
+    @discord.ui.select(placeholder="👥 Para quantas pessoas?", row=0, options=[
+        discord.SelectOption(label=f"{n} {'pessoa' if n == 1 else 'pessoas'}", value=str(n)) for n in range(1, 11)])
+    async def pessoas(self, interaction: discord.Interaction, menu: discord.ui.Select) -> None:
+        ids, origem = self.cog.quem_vai(interaction, None)
+        await self.cog.resultado(interaction, int(menu.values[0]), ids, origem, self.preco)
+
+    @discord.ui.button(label="Em alta", emoji="🔥", style=discord.ButtonStyle.secondary, row=1)
+    async def em_alta(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.cog_ou_erro("RadarCog").mostrar_sugestoes(interaction, "em_alta")
+
+    @discord.ui.button(label="Novidades", emoji="🆕", style=discord.ButtonStyle.secondary, row=1)
+    async def novidades(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.cog_ou_erro("RadarCog").mostrar_sugestoes(interaction, "novidades")
+
+    @discord.ui.button(label="Promoções", emoji="💸", style=discord.ButtonStyle.secondary, row=1)
+    async def promocoes(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.cog_ou_erro("RadarCog").mostrar_sugestoes(interaction, "promocoes")
+
+    @discord.ui.button(label="Grátis", emoji="🎁", style=discord.ButtonStyle.success, row=2)
+    async def gratis(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.cog_ou_erro("GratisCog").mostrar(interaction)
+
+    @discord.ui.button(label="Radar dos streamers", emoji="📡", style=discord.ButtonStyle.secondary, row=2)
+    async def radar(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.cog_ou_erro("RadarCog").mostrar_radar(interaction)
+
+
+class SteamModal(discord.ui.Modal, title="Vincular a sua Steam"):
+    perfil = discord.ui.TextInput(label="Link do seu perfil na Steam",
+                                  placeholder="https://steamcommunity.com/id/seunome", max_length=200)
+
+    def __init__(self, cog: "JogarCog") -> None:
+        super().__init__()
+        self.cog = cog
+
+    async def on_error(self, interaction, erro) -> None:
+        await tratar_erro(interaction, erro)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.cog.cog_ou_erro("SteamCog").vincular(interaction, self.perfil.value.strip())
+
+
+class PerfilView(discord.ui.View):
+    """No seu próprio /perfil: vincular, trocar ou desvincular a Steam."""
+
+    def __init__(self, cog: "JogarCog", dono: int, vinculada: bool) -> None:
+        super().__init__(timeout=1800)
+        self.cog, self.dono = cog, dono
+        if vinculada:
+            self.vincular.label, self.vincular.emoji = "Trocar conta da Steam", "🔄"
+        else:
+            self.remove_item(self.desvincular)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.dono:
+            await interaction.response.send_message(
+                "Esses botões são do dono do perfil. Use `/perfil` para ver o seu. 😉", ephemeral=True)
+            return False
+        return True
+
+    async def on_error(self, interaction, erro, item) -> None:
+        await tratar_erro(interaction, erro)
+
+    @discord.ui.button(label="Vincular Steam", emoji="🔗", style=discord.ButtonStyle.primary)
+    async def vincular(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interaction.response.send_modal(SteamModal(self.cog))
+
+    @discord.ui.button(label="Desvincular", emoji="🗑️", style=discord.ButtonStyle.secondary)
+    async def desvincular(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self.cog.cog_ou_erro("SteamCog").desvincular(interaction)
+
 
 class JogarCog(commands.Cog):
-    jogo = app_commands.Group(name="jogo", description="Informações sobre os jogos.", guild_only=True)
-
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.db: Database = bot.db  # type: ignore[attr-defined]
 
     async def cog_app_command_error(self, interaction, erro) -> None:
         await tratar_erro(interaction, erro)
+
+    def cog_ou_erro(self, nome: str):
+        cog = self.bot.get_cog(nome)
+        if cog is None:
+            raise ErroMaratona("Essa parte do bot não está ligada agora.")
+        return cog
 
     # ---- quem vai jogar ---------------------------------------------
 
@@ -118,7 +241,7 @@ class JogarCog(commands.Cog):
     # ---- /o-que-jogar -------------------------------------------------
 
     @app_commands.command(name="o-que-jogar",
-                          description="Sugere jogos para o número exato de pessoas que vão jogar agora.")
+                          description="Sugestões de jogos: para quantas pessoas, em alta, grátis e radar dos streamers.")
     @app_commands.describe(
         pessoas="Quantas pessoas vão jogar (vazio = quem está na sua call, ou quem você marcar)",
         jogadores="Marque quem vai jogar (@Ana @Bia…) para o bot olhar a Steam de cada um",
@@ -131,14 +254,27 @@ class JogarCog(commands.Cog):
                               preco_max: Optional[app_commands.Range[int, 0, 500]] = None) -> None:
         ids, origem = self.quem_vai(interaction, jogadores)
         n = pessoas or len(ids)
-        if n == 0:
-            raise ErroMaratona("Quantas pessoas vão jogar? Preencha `pessoas`, marque o pessoal em `jogadores` "
-                               "ou entre numa call antes de usar o comando.")
         if preco_max is None:
             _, guardado = self.db.radar_config(interaction.guild_id)
             preco_centavos = PRECO_MAX_PADRAO if guardado is None else guardado
         else:
             preco_centavos = preco_max * 100  # o bot guarda preços em centavos
+        if n == 0:
+            # Sem número e sem call: mostra o "cardápio" (menu de pessoas + botões das sugestões).
+            e = discord.Embed(title="🎮 O que jogar?", color=COR_DETALHE, description=(
+                "Escolha **para quantas pessoas** no menu: o bot mostra os jogos que vocês já têm e que servem "
+                "(do mais barato para o grupo) e novidades da loja.\n\n"
+                "Ou veja as outras sugestões: **🔥 Em alta**, **🆕 Novidades** e **💸 Promoções** da Steam, "
+                "**🎁 Grátis** para resgatar e o **📡 Radar dos streamers**.\n\n"
+                "-# Dica: entrando numa call antes, o bot já sabe quem vai jogar."))
+            e.set_thumbnail(url=url_nando(self.bot))
+            await interaction.response.send_message(embed=e, view=OQueJogarView(self, preco_centavos))
+            return
+        await self.resultado(interaction, n, ids, origem, preco_centavos)
+
+    async def resultado(self, interaction: discord.Interaction, n: int, ids: list[int], origem: str,
+                        preco_centavos: int) -> None:
+        """Os jogos para n pessoas (do comando ou do menu de pessoas)."""
         await interaction.response.defer(thinking=True)
 
         steam = self.bot.get_cog("SteamCog")
@@ -159,14 +295,14 @@ class JogarCog(commands.Cog):
         if talvez:
             e.add_field(name="❔ Talvez (a Steam não diz quantas pessoas aceita)",
                         value=juntar([f"**[{o.app.nome}]({o.app.url})** · {custo_texto(o)}" for o in talvez[:3]]
-                                     + ["Sabe quantos jogam? Ensine o bot com `/jogo jogadores`."]),
+                                     + ["Sabe quantos jogam? Ensine o bot pelo botão **👥** do `/jogo`."]),
                         inline=False)
         e.add_field(name="🆕 Novidades friendslop da loja que servem",
                     value=juntar(novidades, vazio="Nenhuma novidade da loja serve para esse número agora."),
                     inline=False)
         e.set_thumbnail(url=url_nando(self.bot))
-        e.set_footer(text="O nº de jogadores vem da descrição da Steam. Errado ou faltando? /jogo jogadores")
-        await interaction.followup.send(embed=e, allowed_mentions=SEM_PING)
+        e.set_footer(text="O nº de jogadores vem da descrição da Steam. Errado ou faltando? Botão 👥 do /jogo")
+        await interaction.followup.send(embed=e, view=OQueJogarView(self, preco_centavos), allowed_mentions=SEM_PING)
 
     def linhas(self, opcoes: list[Opcao]) -> list[str]:
         faixas = self.db.jogadores_de([o.app.appid for o in opcoes])
@@ -184,7 +320,7 @@ class JogarCog(commands.Cog):
             await steam.atualizar_bibliotecas(ids)
             bibliotecas = self.db.bibliotecas(ids)
             if not bibliotecas:
-                return [], [], "Ninguém aqui tem a Steam vinculada (com jogos públicos). Use `/steam vincular`."
+                return [], [], "Ninguém aqui tem a Steam vinculada (com jogos públicos). Vincule pelo `/perfil`."
             candidatos = escolher_candidatos(bibliotecas, self.db.appids_das_listas_de(ids))
             await steam.analisar_na_loja(candidatos, 20)
             apps = {a: app_da_linha(r) for a, r in self.db.apps(candidatos).items()}
@@ -219,11 +355,12 @@ class JogarCog(commands.Cog):
                 linhas.append(f"**[{i.nome}]({i.url})** · {faixa_texto(faixa)} · {preco}{desconto}")
         return linhas[:MOSTRAR]
 
-    # ---- /jogo ver ----------------------------------------------------
+    # ---- /jogo --------------------------------------------------------
 
-    @jogo.command(name="ver", description="Ficha do jogo: preço, avaliações, modos, nº de jogadores e quem do servidor tem.")
+    @app_commands.command(name="jogo", description="Ficha do jogo: preço, avaliações, nº de jogadores e quem do servidor tem.")
     @app_commands.describe(jogo="Nome do jogo (aparecem sugestões da Steam enquanto digita)")
-    async def cmd_ver(self, interaction: discord.Interaction, jogo: str) -> None:
+    @app_commands.guild_only()
+    async def cmd_jogo(self, interaction: discord.Interaction, jogo: str) -> None:
         nome, appid = ler_escolha(jogo)
         steam = self.bot.get_cog("SteamCog")
         if steam is None:
@@ -256,7 +393,7 @@ class JogarCog(commands.Cog):
         e.add_field(name="👍 Avaliações", value=ficha.avaliacao_texto(avaliacoes))
         faixa = faixa_da_linha(self.db.jogadores_de([appid]).get(appid))
         e.add_field(name="👥 Jogadores", value=faixa_texto(faixa) if faixa
-                    else "A Steam não diz (ensine com `/jogo jogadores`)")
+                    else "A Steam não diz (ensine pelo botão 👥 aqui embaixo)")
         modos = ficha.modos_de_jogo(detalhes)
         if modos:
             e.add_field(name="🕹️ Modos", value=" · ".join(modos))
@@ -289,10 +426,10 @@ class JogarCog(commands.Cog):
                 custo = "" if detalhes.get("is_free") or preco is None else f" · {reais(preco * len(faltam))} para todos"
                 linhas.append(f"🛒 **Não têm ({len(faltam)}):** " + " ".join(f"<@{u}>" for u in faltam) + custo)
         else:
-            linhas.append("Ninguém daqui tem a Steam vinculada (`/steam vincular`), então não sei quem tem.")
+            linhas.append("Ninguém daqui tem a Steam vinculada (vincula pelo `/perfil`), então não sei quem tem.")
         querem = self.db.na_lista_de(guild_id, appid)
         if querem:
-            linhas.append(f"📝 **Na lista de:** " + " ".join(f"<@{u}>" for u in querem))
+            linhas.append("📝 **Na lista de:** " + " ".join(f"<@{u}>" for u in querem))
         historico = ficha.nota_do_grupo(self.db.notas_do_servidor(guild_id), appid)
         if historico:
             media, quantas, vezes = historico
@@ -316,13 +453,18 @@ class JogarCog(commands.Cog):
         await self.parte_steam(e, alvo)
         self.parte_servidor(e, interaction.guild_id, alvo.id)
         e.set_footer(text="Horas e jogos da Steam · o resto é das maratonas deste servidor")
-        await interaction.followup.send(embed=e, allowed_mentions=SEM_PING)
+        if alvo.id == interaction.user.id:  # no seu próprio perfil: botões da Steam
+            vinculada = alvo.id in self.db.contas_steam([alvo.id])
+            await interaction.followup.send(embed=e, view=PerfilView(self, alvo.id, vinculada),
+                                            allowed_mentions=SEM_PING)
+        else:
+            await interaction.followup.send(embed=e, allowed_mentions=SEM_PING)
 
     async def parte_steam(self, e: discord.Embed, alvo: discord.abc.User) -> None:
         steam = self.bot.get_cog("SteamCog")
         conta = self.db.contas_steam([alvo.id]).get(alvo.id)
         if conta is None:
-            e.description = "Sem Steam vinculada, então não sei das horas nem dos jogos. Use `/steam vincular`! 🎮"
+            e.description = "Sem Steam vinculada, então não sei das horas nem dos jogos. Clique em **🔗 Vincular Steam** aqui embaixo! 🎮"
             return
         if steam is not None and steam.api is not None:
             try:
@@ -393,44 +535,7 @@ class JogarCog(commands.Cog):
             linhas.append("📝 " + " · ".join(querem))
         e.add_field(name="🏠 Nas maratonas daqui", value="\n".join(linhas), inline=False)
 
-    # ---- /jogo jogadores ---------------------------------------------
-
-    @jogo.command(name="jogadores", description="Mostra ou ensina ao bot quantas pessoas um jogo aceita.")
-    @app_commands.describe(jogo="Nome do jogo (aparecem sugestões da Steam enquanto digita)",
-                           maximo="Máximo de jogadores (vazio = só mostrar o que o bot sabe)",
-                           minimo="Mínimo de jogadores (padrão: 1)")
-    async def cmd_jogadores(self, interaction: discord.Interaction, jogo: str,
-                            maximo: Optional[app_commands.Range[int, 1, 100]] = None,
-                            minimo: Optional[app_commands.Range[int, 1, 100]] = None) -> None:
-        nome, appid = ler_escolha(jogo)
-        steam = self.bot.get_cog("SteamCog")
-        if not appid and steam is not None:
-            achado = await steam.reconhecer(nome)
-            if achado:
-                appid, nome = achado
-        if not appid:
-            raise ErroMaratona(f"Não achei **{nome}** na Steam. Escolha o jogo da lista de sugestões que "
-                               "aparece enquanto você digita.")
-        if maximo is None:
-            if steam is not None:
-                await steam.analisar_na_loja([appid], 1)
-            row = self.db.jogadores_de([appid]).get(appid)
-            faixa = faixa_da_linha(row)
-            if faixa is None:
-                texto = (f"Ainda não sei quantas pessoas jogam **{nome}**: a descrição da Steam não diz. "
-                         f"Ensine com `/jogo jogadores jogo:{nome} maximo:…`.")
-            else:
-                fonte = (f"ensinado por <@{row['definido_por']}>" if row["fonte"] == "grupo"
-                         else "lido da descrição da Steam")
-                texto = f"**{nome}**: {faixa_texto(faixa)} ({fonte})."
-            await interaction.response.send_message(texto, ephemeral=True, allowed_mentions=SEM_PING)
-            return
-        self.db.definir_jogadores_grupo(appid, minimo or 1, maximo, interaction.user.id)
-        await interaction.response.send_message(
-            f"✅ Anotado: **{nome}** é de {faixa_texto((minimo or 1, maximo))}. "
-            "O `/o-que-jogar` já usa isso para todo mundo.", allowed_mentions=SEM_PING)
-
-    @cmd_jogadores.autocomplete("jogo")
+    @cmd_jogo.autocomplete("jogo")
     async def _autocompletar(self, interaction: discord.Interaction, atual: str):
         return await autocompletar_jogo(self.bot, interaction, atual)
 

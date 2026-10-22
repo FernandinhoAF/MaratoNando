@@ -4,7 +4,7 @@ A Steam não tem um campo organizado com "número de jogadores": só as categori
 (single-player, multiplayer, co-op). Mas a descrição costuma dizer, em texto livre:
 "up to 6 players", "you and up to 5 friends", "1-4 players", "até 4 jogadores"...
 Este módulo procura essas frases. Quando não acha, devolve None, e o grupo pode
-ensinar o bot com /jogo jogadores (o que o grupo ensina sempre vale mais).
+ensinar o bot pelo botão 👥 da ficha do /jogo (o que o grupo ensina sempre vale mais).
 
 Módulo puro (sem Discord nem internet), testado em tests/test_jogadores.py.
 """

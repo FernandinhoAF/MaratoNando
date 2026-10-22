@@ -5,7 +5,7 @@ Como funciona:
   • Ao adicionar, o bot olha os clipes do último mês para saber o que ele andou jogando.
   • A cada 10 minutos, o bot vê quem está ao vivo e qual jogo está na tela.
   • Cada jogo novo é procurado na Steam (preço, se é multiplayer, avaliações).
-  • /radar ver mostra os que passam no filtro; se tiver canal de alertas, o bot avisa os novos.
+  • O botão 📡 Radar dos streamers do /o-que-jogar mostra os que passam no filtro; se tiver canal de alertas, o bot avisa os novos.
 """
 
 import asyncio
@@ -36,7 +36,7 @@ INTERVALO_MINUTOS = 10
 LOGIN_TWITCH = re.compile(r"^[a-z0-9_]{3,25}$")
 CACHE_LOJA_SEGUNDOS = 6 * 3600  # a lista da Steam é guardada por 6 horas
 POR_PAGINA = 6
-# Buscas feitas para montar o /sugestao: as 3 primeiras páginas de co-op online
+# Buscas feitas para montar as sugestões da loja: as 3 primeiras páginas de co-op online
 # e mais uma página para cada tag de diversão (Funny, Party Game, Social Deduction).
 BUSCAS_LOJA = ({"start": 0}, {"start": 100}, {"start": 200},
                {"tags": 4136}, {"tags": 7178}, {"tags": 745697})
@@ -113,7 +113,7 @@ class SalvarSugestaoBotao(discord.ui.DynamicItem[discord.ui.Button], template=r"
 
 
 class SugestoesView(discord.ui.View):
-    """Menu embaixo do /radar ver para cada pessoa salvar sugestões na própria lista."""
+    """Menu embaixo do radar para cada pessoa salvar sugestões na própria lista."""
 
     def __init__(self, db: Database, sugestoes: list[Sugestao]) -> None:
         super().__init__(timeout=900)
@@ -143,7 +143,7 @@ class SugestoesView(discord.ui.View):
 
 
 class SugestoesLojaView(discord.ui.View):
-    """Páginas do /sugestao: menu para salvar na lista + botão para ver mais."""
+    """Páginas das sugestões da loja (botões do /o-que-jogar): menu para salvar na lista + botão para ver mais."""
 
     def __init__(self, cog: "RadarCog", itens: list[ItemLoja], tipo: str, preco_max: int) -> None:
         super().__init__(timeout=900)
@@ -198,7 +198,7 @@ class SugestoesLojaView(discord.ui.View):
                         value=f"{preco_item} · {avaliacao}\n🏷️ {tags} · [Ver na Steam]({item.url})", inline=False)
         if self.da_pagina() and self.da_pagina()[0].imagem:
             e.set_thumbnail(url=self.da_pagina()[0].imagem)
-        e.set_footer(text=f"Página {self.pagina + 1} de {self.paginas} · /radar ver mostra o que os streamers estão jogando")
+        e.set_footer(text=f"Página {self.pagina + 1} de {self.paginas} · 📡 Radar dos streamers (no /o-que-jogar) mostra o que eles jogam")
         return e
 
     async def salvar(self, interaction: discord.Interaction) -> None:
@@ -221,10 +221,13 @@ class SugestoesLojaView(discord.ui.View):
 # ---------------------------------------------------------------- cog
 
 class RadarCog(commands.Cog):
+    # Configurações do radar: só aparecem para quem tem "Gerenciar servidor".
+    # Ver as sugestões do radar é pelo botão "📡 Radar dos streamers" do /o-que-jogar.
     radar = app_commands.Group(
         name="radar",
-        description="Sugestões de jogos para jogar com os amigos, a partir do que os streamers jogam.",
+        description="Configura o radar: quais streamers acompanhar, preço máximo e canal de alertas.",
         guild_only=True,
+        default_permissions=discord.Permissions(manage_guild=True),
     )
 
     def __init__(self, bot: commands.Bot) -> None:
@@ -373,8 +376,8 @@ class RadarCog(commands.Cog):
 
     # ---- comandos --------------------------------------------------
 
-    @radar.command(name="ver", description="Mostra jogos para jogar com os amigos que os streamers andam jogando.")
-    async def cmd_ver(self, interaction: discord.Interaction) -> None:
+    async def mostrar_radar(self, interaction: discord.Interaction) -> None:
+        """Jogos para jogar com os amigos que os streamers andam jogando (botão do /o-que-jogar)."""
         streamers = self.db.radar_streamers(interaction.guild_id)
         if not streamers:
             raise ErroMaratona("Nenhum streamer no radar ainda. Um admin pode usar "
@@ -436,7 +439,7 @@ class RadarCog(commands.Cog):
         texto = f"✅ **{u['display_name']}** entrou no radar!"
         if jogos:
             texto += (f" Pelos clipes do último mês, achei **{plural(jogos, 'jogo', 'jogos')}**. "
-                      "Estou conferindo cada um na Steam; em alguns minutos o `/radar ver` fica completo.")
+                      "Estou conferindo cada um na Steam; em alguns minutos o radar (botão 📡 do `/o-que-jogar`) fica completo.")
         texto += f"\nDaqui pra frente, a cada {INTERVALO_MINUTOS} minutos eu vejo o que ele está jogando ao vivo."
         await interaction.followup.send(texto)
         self.em_segundo_plano(self.verificar_steam(limite=100))
@@ -496,7 +499,7 @@ class RadarCog(commands.Cog):
         await interaction.response.send_message(f"💰 Preço máximo do radar: **R$ {valor:.2f}**".replace(".", ","))
 
 
-    # ---- /sugestao (só Steam) --------------------------------------
+    # ---- sugestões da loja (só Steam) --------------------------------
 
     async def itens_da_loja(self, tipo: str) -> list[ItemLoja]:
         """Busca na Steam (ou pega da memória, se a busca tem menos de 6 horas)."""
@@ -511,17 +514,8 @@ class RadarCog(commands.Cog):
             self.cache_loja[tipo] = (time.monotonic(), itens)
             return itens
 
-    @app_commands.command(name="sugestao", description="Sugere jogos friendslop em alta na Steam.")
-    @app_commands.describe(tipo="Que tipo de lista (padrão: em alta)")
-    @app_commands.choices(tipo=[
-        app_commands.Choice(name="🔥 Em alta", value="em_alta"),
-        app_commands.Choice(name="🆕 Novidades", value="novidades"),
-        app_commands.Choice(name="💸 Em promoção", value="promocoes"),
-    ])
-    @app_commands.guild_only()
-    async def cmd_sugestao(self, interaction: discord.Interaction,
-                           tipo: Optional[app_commands.Choice[str]] = None) -> None:
-        chave = tipo.value if tipo else "em_alta"
+    async def mostrar_sugestoes(self, interaction: discord.Interaction, chave: str = "em_alta") -> None:
+        """Friendslop da loja da Steam: "em_alta", "novidades" ou "promocoes" (botões do /o-que-jogar)."""
         await interaction.response.defer(thinking=True)
         try:
             itens = await self.itens_da_loja(chave)
@@ -532,7 +526,7 @@ class RadarCog(commands.Cog):
         friendslop = filtrar(itens, preco_max)
         if not friendslop:
             await interaction.followup.send("Não achei nenhum jogo que passe no filtro agora. 😕 "
-                                            "Tenta outro tipo, ou aumente o preço com `/radar preco-maximo`.")
+                                            "Tenta outro tipo, ou peça para um admin aumentar o preço com `/radar preco-maximo`.")
             return
         view = SugestoesLojaView(self, friendslop, chave, preco_max)
         await interaction.followup.send(embed=view.embed(), view=view)

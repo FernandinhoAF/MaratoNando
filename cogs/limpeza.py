@@ -25,7 +25,7 @@ from marca import COR_DETALHE
 from discord.ext import commands, tasks
 
 from cogs.maratona import tratar_erro
-from db import Database
+from db import Database, ErroMaratona
 
 log = logging.getLogger("maratonando.limpeza")
 
@@ -97,7 +97,7 @@ class LimpezaCog(commands.Cog):
             # O painel de uma maratona que ainda está rolando não pode sumir.
             m = self.db.maratona_por_painel(message_id)
             ag = self.db.agendamento_por_mensagem(message_id)  # e nem o convite de uma maratona agendada
-            ch = self.db.chamado_por_mensagem(message_id)       # e nem um /chamar marcado para mais tarde
+            ch = self.db.chamado_por_mensagem(message_id)       # e nem um /bora marcado para mais tarde
             chamado_esperando = (ch is not None and not ch["encerrado"] and ch["inicio"] is not None
                                  and datetime.fromisoformat(ch["inicio"]) > agora())
             if (m is not None and m.aberta) or (ag is not None and ag.status == "marcado") or chamado_esperando:
@@ -169,7 +169,7 @@ class LimpezaCog(commands.Cog):
         await interaction.response.send_message(embed=self.embed_config(interaction.guild_id), ephemeral=True)
 
     @config.command(name="cargo-jogos",
-                    description="Cargo marcado quando abre maratona e no /chamar (vazio = não marcar ninguém).")
+                    description="Cargo marcado quando abre maratona e no /bora (vazio = não marcar ninguém).")
     @app_commands.describe(cargo="O cargo que vocês usam para chamar o pessoal para jogar")
     async def cmd_cargo(self, interaction: discord.Interaction, cargo: Optional[discord.Role] = None) -> None:
         self.db.definir_cargo_jogos(interaction.guild_id, cargo.id if cargo else None)
@@ -181,9 +181,22 @@ class LimpezaCog(commands.Cog):
                      "mas ninguém é notificado. Para resolver: Configurações do servidor → Cargos → "
                      f"{cargo.name} → ligue **Permitir que todos @mencionem este cargo**.")
         await interaction.response.send_message(
-            (f"✅ {cargo.mention} vai ser marcado quando abrirem uma maratona e no `/chamar`." if cargo
+            (f"✅ {cargo.mention} vai ser marcado quando abrirem uma maratona e no `/bora`." if cargo
              else "🔕 Nenhum cargo vai ser marcado.") + aviso,
             embed=self.embed_config(interaction.guild_id), ephemeral=True)
+
+    @config.command(name="steam", description="Vincula (ou desvincula) a Steam de outra pessoa.")
+    @app_commands.describe(pessoa="De quem é a conta",
+                           perfil="Link do perfil na Steam (vazio = desvincular a conta dessa pessoa)")
+    async def cmd_steam(self, interaction: discord.Interaction, pessoa: discord.Member,
+                        perfil: Optional[str] = None) -> None:
+        steam = self.bot.get_cog("SteamCog")
+        if steam is None:
+            raise ErroMaratona("A parte da Steam do bot não está ligada.")
+        if perfil:
+            await steam.vincular(interaction, perfil, pessoa)
+        else:
+            await steam.desvincular(interaction, pessoa)
 
     @config.command(name="ver", description="Mostra as configurações atuais.")
     async def cmd_ver(self, interaction: discord.Interaction) -> None:

@@ -1,6 +1,6 @@
 """Jogos grátis para resgatar: o grátis da semana da Epic e os 100% off da Steam.
 
-  • /gratis mostra o que está grátis agora (e o que fica grátis em breve na Epic).
+  • O botão 🎁 Grátis do /o-que-jogar mostra o que está grátis agora (e o que fica grátis em breve na Epic).
   • A cada 3 horas o bot confere e, quando aparece jogo grátis novo, avisa no canal do bot
     (sem marcar ninguém). Liga/desliga com /config gratis.
 """
@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 
 import aiohttp
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
 
 import gratis
@@ -87,11 +86,10 @@ class GratisCog(commands.Cog):
             self.cache = (time.monotonic(), resultado)
             return resultado
 
-    # ---- /gratis ------------------------------------------------------
+    # ---- mostrar os grátis --------------------------------------------
 
-    @app_commands.command(name="gratis", description="Jogos grátis para resgatar agora (Epic e Steam) e os próximos.")
-    @app_commands.guild_only()
-    async def cmd_gratis(self, interaction: discord.Interaction) -> None:
+    async def mostrar(self, interaction: discord.Interaction) -> None:
+        """Jogos grátis para resgatar agora (Epic e Steam) e os próximos (botão 🎁 do /o-que-jogar)."""
         await interaction.response.defer(thinking=True)
         agora, em_breve, steam = await self.buscar()
         brindes = agora + steam

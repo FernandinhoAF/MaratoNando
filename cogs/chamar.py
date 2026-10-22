@@ -1,6 +1,6 @@
-"""/chamar (ou /bora): chama o pessoal para jogar, marcando o cargo de jogos.
+"""/bora: chama o pessoal para jogar, marcando o cargo de jogos.
 
-  • /chamar [jogo] [pessoas] [hora] [marcar_cargo]  posta o chamado (marca o cargo de /config cargo-jogos,
+  • /bora [jogo] [pessoas] [hora] [marcar_cargo]  posta o chamado (marca o cargo de /config cargo-jogos,
     a não ser que marcar_cargo seja Não).
   • Cada um responde com um clique: ✋ Bora · ⏰ Daqui a pouco · ❌ Hoje não.
   • "pessoas" = vagas. Os primeiros que clicam Bora estão dentro; quando lota, o bot marca só quem está
@@ -164,20 +164,7 @@ class ChamarCog(commands.Cog):
 
     # ---- comando ----------------------------------------------------
 
-    @app_commands.command(name="chamar", description="Chama o pessoal para jogar (com vagas, fila e horário).")
-    @app_commands.describe(jogo="Qual jogo (deixe vazio para \"bora jogar alguma coisa?\")",
-                           pessoas="Vagas: quantas pessoas cabem (quem chegar depois vai para a fila)",
-                           hora="Horário de Brasília, se não for agora (ex.: 21h ou 21:30)",
-                           marcar_cargo="Marcar o cargo de jogos? (padrão: sim)")
-    @app_commands.guild_only()
-    async def cmd_chamar(self, interaction: discord.Interaction,
-                         jogo: Optional[app_commands.Range[str, 1, 100]] = None,
-                         pessoas: Optional[app_commands.Range[int, 2, 20]] = None,
-                         hora: Optional[app_commands.Range[str, 1, 10]] = None,
-                         marcar_cargo: bool = True) -> None:
-        await self.chamar(interaction, jogo, pessoas, hora, marcar_cargo)
-
-    @app_commands.command(name="bora", description="Atalho do /chamar: chama o pessoal para jogar.")
+    @app_commands.command(name="bora", description="Chama o pessoal para jogar: vagas com fila, horário e cargo de jogos.")
     @app_commands.describe(jogo="Qual jogo (deixe vazio para \"bora jogar alguma coisa?\")",
                            pessoas="Vagas: quantas pessoas cabem (quem chegar depois vai para a fila)",
                            hora="Horário de Brasília, se não for agora (ex.: 21h ou 21:30)",
@@ -228,10 +215,6 @@ class ChamarCog(commands.Cog):
         if aviso:
             await interaction.followup.send(f"Chamado feito{aviso}.", ephemeral=True)
         self.em_segundo_plano(self.calcular_steam(chamado_id))
-
-    @cmd_chamar.autocomplete("jogo")
-    async def _autocompletar(self, interaction: discord.Interaction, atual: str):
-        return await autocompletar_jogo(self.bot, interaction, atual)
 
     @cmd_bora.autocomplete("jogo")
     async def _autocompletar_bora(self, interaction: discord.Interaction, atual: str):

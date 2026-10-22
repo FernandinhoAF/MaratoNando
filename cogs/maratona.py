@@ -12,11 +12,10 @@ from discord.ext import commands
 
 import cartoes
 from biblioteca import resumo_grupo, rodape_card
-import agenda
 import modos
 import estatisticas
 from marca import ASSINATURA, COR_DETALHE, COR_FIM, COR_PAINEL, COR_ROLETA, COR_VERGONHA, url_nando
-from nomes import ler_escolha, mesmo_jogo, valor_escolha
+from nomes import ler_escolha, valor_escolha
 from notas import MINIMO_NOTAS_RANKING, estrelas, numero, resumo_nota
 from notas import ranking as ranking_notas
 from db import Database, ErroMaratona, ItemLista, Jogo, Maratona, limpar_nome, separar_nomes
@@ -31,6 +30,17 @@ TEMPO_MAX_MODO = 45  # segundos para conferir na Steam os jogos da roleta (modos
 SUSPENSE_FINAL = 1.6
 
 MEDALHAS = ("🥇", "🥈", "🥉")
+# Menu "Mais opções…" do painel: (valor, rótulo, emoji, descrição).
+OPCOES_MAIS = [
+    ("modo", "Modo da roleta", "🎯", "Quais jogos podem sair no sorteio (quem organizou)"),
+    ("baratos", "Mais baratos para o grupo", "💰", "Jogos multiplayer do mais barato para o grupo"),
+    ("times", "Sortear times", "👥", "Divide quem está jogando em times"),
+    ("steam", "Quem tem a Steam vinculada", "🎮", "As contas da Steam de quem está jogando"),
+    ("incluir", "Incluir alguém", "➕", "Coloca na maratona quem chegou sem jogo"),
+    ("tirar", "Tirar alguém sem jogo", "➖", "Tira quem tinha entrado sem jogo"),
+    ("painel", "Trazer o painel para baixo", "📌", "Posta o painel de novo no fim do chat"),
+    ("ajuda", "Como funciona", "❓", "Explica a maratona"),
+]
 ESCOLHAS_MODO = [
     app_commands.Choice(name="🎲 Livre (qualquer jogo)", value="livre"),
     app_commands.Choice(name="✅ Ninguém precisa comprar (todo mundo tem ou é grátis)", value="todos_tem"),
@@ -214,6 +224,133 @@ class PainelView(discord.ui.View):
         if m := await self._maratona(interaction):
             await self.cog.pedir_encerramento(interaction, m)
 
+    @discord.ui.select(custom_id="maratonando:mais", placeholder="Mais opções…", row=1, options=[
+        discord.SelectOption(label=rotulo, value=valor, emoji=emoji, description=desc)
+        for valor, rotulo, emoji, desc in OPCOES_MAIS])
+    async def mais(self, interaction: discord.Interaction, menu: discord.ui.Select) -> None:
+        if m := await self._maratona(interaction):
+            await self.cog.opcao_do_painel(interaction, m, menu.values[0])
+
+
+class HubMaratonaView(discord.ui.View):
+    """O /maratona quando não tem maratona aberta: abrir agora, agendar ou ver como funciona."""
+
+    def __init__(self, cog: "MaratonaCog") -> None:
+        super().__init__(timeout=600)
+        self.cog = cog
+
+    async def on_error(self, interaction, erro, item) -> None:
+        await tratar_erro(interaction, erro)
+
+    @discord.ui.button(label="Abrir agora", emoji="🎮", style=discord.ButtonStyle.success)
+    async def abrir(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interaction.response.send_modal(AbrirMaratonaModal(self.cog))
+
+    @discord.ui.button(label="Agendar", emoji="📅", style=discord.ButtonStyle.primary)
+    async def agendar(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interaction.response.send_modal(AgendarMaratonaModal(self.cog))
+
+    @discord.ui.button(label="Como funciona", emoji="❓", style=discord.ButtonStyle.secondary)
+    async def ajuda(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interaction.response.send_message(embed=self.cog.embed_ajuda_maratona(), ephemeral=True)
+
+
+class AbrirMaratonaModal(discord.ui.Modal, title="Abrir a maratona"):
+    nome = discord.ui.TextInput(label="Nome da maratona", placeholder="Maratona de Jogos", required=False,
+                                max_length=60)
+    limite = discord.ui.TextInput(label="Máximo de jogos por pessoa (vazio = sem limite)", placeholder="3",
+                                  required=False, max_length=2)
+
+    def __init__(self, cog: "MaratonaCog") -> None:
+        super().__init__()
+        self.cog = cog
+
+    async def on_error(self, interaction, erro) -> None:
+        await tratar_erro(interaction, erro)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        limite = None
+        if self.limite.value.strip():
+            if not self.limite.value.strip().isdigit() or not 1 <= int(self.limite.value) <= 25:
+                raise ErroMaratona("O limite de jogos por pessoa vai de 1 a 25 (ou fica vazio).")
+            limite = int(self.limite.value)
+        await self.cog.abrir_maratona(interaction, self.nome.value.strip() or None, limite)
+
+
+class AgendarMaratonaModal(discord.ui.Modal, title="Agendar a maratona"):
+    dia = discord.ui.TextInput(label="Dia", placeholder="sábado, amanhã, 25/10…", max_length=20)
+    hora = discord.ui.TextInput(label="Hora (de Brasília)", placeholder="21h, 21:30…", max_length=10)
+    nome = discord.ui.TextInput(label="Nome da maratona", placeholder="Maratona de Jogos", required=False,
+                                max_length=60)
+
+    def __init__(self, cog: "MaratonaCog") -> None:
+        super().__init__()
+        self.cog = cog
+
+    async def on_error(self, interaction, erro) -> None:
+        await tratar_erro(interaction, erro)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        agenda_cog = self.cog.bot.get_cog("AgendaCog")
+        if agenda_cog is None:
+            raise ErroMaratona("A parte de agendamento do bot não está ligada.")
+        # Se quem agendou está numa call, o evento do calendário aponta para ela.
+        call = getattr(getattr(interaction.user, "voice", None), "channel", None)
+        await agenda_cog.agendar(interaction, self.dia.value, self.hora.value, self.nome.value.strip() or None,
+                                 call if isinstance(call, discord.VoiceChannel) else None)
+
+
+class ModoView(discord.ui.View):
+    """Escolha do modo da roleta (menu "Mais…" → Modo da roleta)."""
+
+    def __init__(self, cog: "MaratonaCog", maratona_id: int) -> None:
+        super().__init__(timeout=300)
+        self.cog, self.maratona_id = cog, maratona_id
+
+    async def on_error(self, interaction, erro, item) -> None:
+        await tratar_erro(interaction, erro)
+
+    @discord.ui.select(placeholder="Escolha o modo…", options=[
+        discord.SelectOption(label=c.name, value=c.value) for c in ESCOLHAS_MODO])
+    async def escolher(self, interaction: discord.Interaction, menu: discord.ui.Select) -> None:
+        if menu.values[0] == "ate_preco":
+            await interaction.response.send_modal(PrecoModal(self.cog, self.maratona_id))
+        else:
+            await self.cog.aplicar_modo(interaction, self.maratona_id, menu.values[0], None)
+
+
+class PrecoModal(discord.ui.Modal, title="Só jogos de até quanto?"):
+    preco = discord.ui.TextInput(label="Preço máximo, em reais", placeholder="20", max_length=3)
+
+    def __init__(self, cog: "MaratonaCog", maratona_id: int) -> None:
+        super().__init__()
+        self.cog, self.maratona_id = cog, maratona_id
+
+    async def on_error(self, interaction, erro) -> None:
+        await tratar_erro(interaction, erro)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        valor = self.preco.value.strip().replace("R$", "").strip()
+        if not valor.isdigit() or not 1 <= int(valor) <= 500:
+            raise ErroMaratona("Escreva só o número de reais, de 1 a 500 (ex.: 20).")
+        await self.cog.aplicar_modo(interaction, self.maratona_id, "ate_preco", int(valor))
+
+
+class PessoasView(discord.ui.View):
+    """Incluir na maratona quem chegou sem jogo, ou tirar quem tinha entrado sem jogo."""
+
+    def __init__(self, cog: "MaratonaCog", maratona_id: int, acao: str) -> None:
+        super().__init__(timeout=300)
+        self.cog, self.maratona_id, self.acao = cog, maratona_id, acao
+        self.quem.placeholder = "Quem chegou?" if acao == "incluir" else "Quem saiu?"
+
+    async def on_error(self, interaction, erro, item) -> None:
+        await tratar_erro(interaction, erro)
+
+    @discord.ui.select(cls=discord.ui.UserSelect, min_values=1, max_values=10)
+    async def quem(self, interaction: discord.Interaction, menu: discord.ui.UserSelect) -> None:
+        await self.cog.incluir_ou_tirar(interaction, self.maratona_id, self.acao, list(menu.values))
+
 
 class AdicionarJogosModal(discord.ui.Modal, title="Colocar jogos na roleta"):
     jogos = discord.ui.TextInput(
@@ -388,10 +525,27 @@ class MinhaListaView(discord.ui.View):
             )
             menu.callback = self.remover
             self.add_item(menu)
+        adicionar = discord.ui.Button(label="Adicionar jogos", emoji="➕", style=discord.ButtonStyle.success)
+        adicionar.callback = self.adicionar
+        self.add_item(adicionar)
+        grupo = discord.ui.Button(label="Lista do grupo", emoji="🎁", style=discord.ButtonStyle.secondary)
+        grupo.callback = self.grupo
+        self.add_item(grupo)
         if self.nao_ligados():
             botao = discord.ui.Button(label="Conferir nomes na Steam", emoji="🔎", style=discord.ButtonStyle.primary)
             botao.callback = self.conferir
             self.add_item(botao)
+
+    async def adicionar(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(SalvarNaListaModal(self.cog))
+
+    async def grupo(self, interaction: discord.Interaction) -> None:
+        if interaction.guild_id is None:
+            raise ErroMaratona("A lista do grupo só existe dentro de um servidor.")
+        steam = self.cog.bot.get_cog("SteamCog")
+        if steam is None:
+            raise ErroMaratona("A parte da Steam do bot não está ligada.")
+        await steam.mostrar_desejos(interaction)
 
     def nao_ligados(self) -> list[str]:
         """Jogos da lista que o bot ainda não sabe qual jogo da Steam são."""
@@ -417,7 +571,7 @@ class MinhaListaView(discord.ui.View):
         e = discord.Embed(
             title="📝 Sua lista de jogos", color=COR_PAINEL,
             description=juntar(linhas, limite=4000,
-                               vazio="Sua lista está vazia. Use `/lista adicionar` para guardar jogos."),
+                               vazio="Sua lista está vazia. Clique em **➕ Adicionar jogos** para guardar jogos."),
         )
         e.set_footer(text="Só você vê esta lista. Na maratona, ela aparece quando você clica em Adicionar jogos.")
         return e
@@ -527,17 +681,6 @@ def view_notas(jogo_id: int) -> discord.ui.View:
 
 
 class MaratonaCog(commands.Cog):
-    maratona = app_commands.Group(
-        name="maratona",
-        description="Organize uma maratona de jogos com roleta.",
-        guild_only=True,
-    )
-
-    lista = app_commands.Group(
-        name="lista",
-        description="Sua lista pessoal de jogos para as próximas maratonas.",
-    )
-
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.db: Database = bot.db  # type: ignore[attr-defined]
@@ -574,7 +717,7 @@ class MaratonaCog(commands.Cog):
     def exigir_aberta(self, interaction: discord.Interaction) -> Maratona:
         m = self.db.maratona_aberta(interaction.guild_id)
         if m is None:
-            raise ErroMaratona("Não tem nenhuma maratona aberta agora. Use `/maratona criar` para começar uma!")
+            raise ErroMaratona("Não tem nenhuma maratona aberta agora. Use `/maratona` para começar uma!")
         return m
 
     # ---- painel ----------------------------------------------------
@@ -687,7 +830,7 @@ class MaratonaCog(commands.Cog):
         return achados, duvidas
 
     async def receber_nomes(self, interaction: discord.Interaction, nomes: list[str], concluir) -> None:
-        """Caminho único para jogos digitados (formulário, /maratona adicionar, /lista adicionar).
+        """Caminho único para jogos digitados (formulário, /maratona jogo:…, /lista jogo:…).
 
         1. O que veio escolhido do autocompletar já está certo.
         2. O resto é conferido na Steam: nome exato vira o nome oficial; nome parecido
@@ -744,7 +887,7 @@ class MaratonaCog(commands.Cog):
         return concluir
 
     async def conferir_lista(self, interaction: discord.Interaction, nomes: list[str]) -> None:
-        """Botão "Conferir nomes na Steam" do /lista ver: liga os jogos da lista à Steam, corrigindo os nomes."""
+        """Botão "Conferir nomes na Steam" do /lista: liga os jogos da lista à Steam, corrigindo os nomes."""
         if not nomes:
             await responder_privado(interaction, "Todos os jogos da sua lista já estão ligados à Steam. 👍")
             return
@@ -806,7 +949,7 @@ class MaratonaCog(commands.Cog):
             self.db.sair_sem_jogo(m.id, uid)
             texto = "👋 Você saiu da lista de quem está jogando."
         elif self.db.entrar_sem_jogo(m.id, uid):
-            texto = ("🙋 Você entrou na maratona! Já conta nos times e no `/maratona baratos`. "
+            texto = ("🙋 Você entrou na maratona! Já conta nos times e nos mais baratos do grupo. "
                      "Se quiser colocar jogo na roleta, é só clicar em **Adicionar jogos**.")
         else:
             texto = "Você já está jogando (colocou jogos na roleta). 👍"
@@ -819,29 +962,42 @@ class MaratonaCog(commands.Cog):
 
     # ---- /maratona -------------------------------------------------
 
-    @maratona.command(name="criar", description="Abre uma nova maratona de jogos neste canal.")
-    @app_commands.describe(nome="Nome da maratona (opcional)",
-                           limite="Máximo de jogos por pessoa (opcional; sem limite se ficar vazio)",
-                           avisar="Marcar o cargo de jogos? (padrão: sim, se o cargo estiver configurado)",
-                           modo="Quais jogos podem sair no sorteio (padrão: livre). Dá para mudar depois.",
-                           preco="Só no modo \"só até R$ X\": o preço máximo, em reais")
-    @app_commands.choices(modo=ESCOLHAS_MODO)
-    async def cmd_criar(self, interaction: discord.Interaction,
-                        nome: Optional[app_commands.Range[str, 1, 60]] = None,
-                        limite: Optional[app_commands.Range[int, 1, 25]] = None,
-                        avisar: bool = True,
-                        modo: Optional[app_commands.Choice[str]] = None,
-                        preco: Optional[app_commands.Range[int, 1, 500]] = None) -> None:
-        modo_valor = modo.value if modo else "livre"
-        preco_centavos = self.validar_modo(modo_valor, preco)
+    @app_commands.command(name="maratona",
+                          description="Abre, agenda ou mostra a maratona (e coloca um jogo na roleta, se quiser).")
+    @app_commands.describe(jogo="Opcional: um jogo para colocar na roleta (aparecem sugestões da Steam)")
+    @app_commands.guild_only()
+    async def cmd_maratona(self, interaction: discord.Interaction,
+                           jogo: Optional[app_commands.Range[str, 1, 100]] = None) -> None:
+        m = self.db.maratona_aberta(interaction.guild_id)
+        if jogo:
+            if m is None:
+                raise ErroMaratona("Não tem maratona aberta agora. Use `/maratona` (sem nada) para abrir uma.")
+            await self.receber_nomes(interaction, [jogo], self.concluidor_roleta(m.id))
+            return
+        if m is not None:  # já tem maratona: traz o painel para o fim do chat
+            await self.trazer_painel(interaction, m)
+            return
+        e = discord.Embed(title="🎮 Maratona de jogos", color=COR_PAINEL, description=(
+            "Não tem maratona aberta agora.\n\n"
+            "**🎮 Abrir agora** começa uma maratona neste canal.\n"
+            "**📅 Agendar** marca para depois: o bot posta um convite com \"Eu vou\", coloca no calendário "
+            "do servidor e abre sozinho 15 minutos antes.\n\n"
+            f"**Regra de ouro:** {ASSINATURA} 🫡"))
+        e.set_thumbnail(url=url_nando(self.bot))
+        await interaction.response.send_message(embed=e, view=HubMaratonaView(self), ephemeral=True)
+
+    @cmd_maratona.autocomplete("jogo")
+    async def _autocompletar_roleta(self, interaction: discord.Interaction, atual: str):
+        return await autocompletar_jogo(self.bot, interaction, atual)
+
+    async def abrir_maratona(self, interaction: discord.Interaction, nome: Optional[str],
+                             limite: Optional[int], avisar: bool = True) -> None:
         aberta = self.db.maratona_aberta(interaction.guild_id)
         if aberta:
             raise ErroMaratona(f"Já tem uma maratona aberta em <#{aberta.channel_id}>. "
-                               "Encerre ela antes (ou use `/maratona painel` para achar o painel).")
+                               "Use `/maratona` para trazer o painel dela.")
         m = self.db.criar_maratona(interaction.guild_id, interaction.channel_id, interaction.user.id,
                                    nome or "Maratona de Jogos", limite)
-        if modo_valor != "livre":
-            m = self.db.definir_modo(m.id, modo_valor, preco_centavos)
         if avisar:
             mencao, permissao, aviso = mencao_do_cargo(self.db, interaction.guild_id)
         else:
@@ -854,30 +1010,87 @@ class MaratonaCog(commands.Cog):
         if aviso:
             await interaction.followup.send(f"A maratona foi aberta{aviso}.", ephemeral=True)
 
-    @maratona.command(name="agendar", description="Marca a maratona para depois: botão de presença, evento e aviso antes.")
-    @app_commands.describe(dia="hoje, amanhã, um dia da semana (sábado) ou a data (25/10)",
-                           hora="Horário de Brasília: 21h, 21:30 ou 21h30",
-                           nome="Nome da maratona (opcional)",
-                           call="Canal de voz onde vai ser (opcional; aparece no evento do calendário)")
-    @app_commands.guild_only()
-    async def cmd_agendar(self, interaction: discord.Interaction, dia: str, hora: str,
-                          nome: Optional[app_commands.Range[str, 1, 60]] = None,
-                          call: Optional[discord.VoiceChannel] = None) -> None:
-        agenda_cog = self.bot.get_cog("AgendaCog")
-        if agenda_cog is None:
-            raise ErroMaratona("A parte de agendamento do bot não está ligada.")
-        await agenda_cog.agendar(interaction, dia, hora, nome, call)
+    async def trazer_painel(self, interaction: discord.Interaction, m: Maratona) -> None:
+        """Posta o painel de novo no fim do chat e apaga o antigo (para não ficarem dois com botões)."""
+        antigo_canal, antiga_msg = m.channel_id, m.panel_message_id
+        await self.enviar_painel(interaction, m)
+        canal = self.bot.get_channel(antigo_canal)
+        if canal is not None and antiga_msg is not None:
+            try:
+                await canal.get_partial_message(antiga_msg).delete()
+            except discord.HTTPException:
+                pass
 
-    @cmd_agendar.autocomplete("dia")
-    async def _autocompletar_dia(self, interaction: discord.Interaction, atual: str):
-        opcoes = agenda.sugestoes_de_dia(datetime.now(timezone.utc), atual)
-        return [app_commands.Choice(name=texto, value=valor) for texto, valor in opcoes][:25]
+    # ---- menu "Mais opções…" do painel -------------------------------
 
-    @cmd_agendar.autocomplete("hora")
-    async def _autocompletar_hora(self, interaction: discord.Interaction, atual: str):
-        horas = ["19:00", "19:30", "20:00", "20:30", "21:00", "21:30", "22:00", "22:30", "23:00"]
-        filtradas = [h for h in horas if h.startswith(atual.strip())] or ([atual.strip()] if atual.strip() else horas)
-        return [app_commands.Choice(name=h, value=h) for h in filtradas][:25]
+    async def opcao_do_painel(self, interaction: discord.Interaction, m: Maratona, opcao: str) -> None:
+        if opcao == "painel":
+            await self.trazer_painel(interaction, m)
+            return  # o painel novo já vem com o menu limpo
+        if opcao == "modo":
+            if not self.pode_organizar(interaction, m):
+                raise ErroMaratona(f"Só quem organizou (<@{m.host_id}>) pode mudar o modo da roleta.")
+            await interaction.response.send_message(
+                f"🎯 Modo atual: **{modos.descricao(m.modo, m.modo_preco)}**\nQuais jogos podem sair no sorteio?",
+                view=ModoView(self, m.id), ephemeral=True)
+        elif opcao == "baratos":
+            steam = self.bot.get_cog("SteamCog")
+            if steam is None:
+                raise ErroMaratona("A parte da Steam do bot não está ligada.")
+            await steam.mostrar_baratos(interaction, m)
+        elif opcao == "times":
+            times = self.bot.get_cog("TimesCog")
+            if times is None:
+                raise ErroMaratona("A parte de times do bot não está ligada.")
+            await times.abrir(interaction)
+        elif opcao == "steam":
+            steam = self.bot.get_cog("SteamCog")
+            if steam is None:
+                raise ErroMaratona("A parte da Steam do bot não está ligada.")
+            await steam.mostrar_contas(interaction)
+        elif opcao in ("incluir", "tirar"):
+            if opcao == "incluir" and not self.pode_organizar(interaction, m):
+                raise ErroMaratona(f"Só quem organizou (<@{m.host_id}>) pode incluir outras pessoas. "
+                                   "Cada um pode entrar sozinho pelo botão **🙋 Tô jogando**.")
+            await interaction.response.send_message(
+                "Escolha as pessoas:", view=PessoasView(self, m.id, opcao), ephemeral=True)
+        else:  # ajuda
+            await interaction.response.send_message(embed=self.embed_ajuda_maratona(), ephemeral=True)
+        # Volta o menu para "Mais opções…" (senão escolher a mesma opção de novo não funciona).
+        self.em_segundo_plano(self.atualizar_painel(m.id))
+
+    async def incluir_ou_tirar(self, interaction: discord.Interaction, maratona_id: int, acao: str,
+                               pessoas: list) -> None:
+        m = self.db.maratona(maratona_id)
+        if m is None or not m.aberta:
+            raise ErroMaratona("Essa maratona já terminou. 🏁")
+        feitos, avisos = [], []
+        for pessoa in pessoas:
+            if pessoa.bot:
+                avisos.append(f"{pessoa.mention}: bots não jogam maratona. 🤖")
+            elif acao == "incluir":
+                if self.db.entrar_sem_jogo(m.id, pessoa.id):
+                    feitos.append(pessoa.mention)
+                else:
+                    avisos.append(f"{pessoa.mention} já está jogando.")
+            else:
+                if not self.pode_organizar(interaction, m) and pessoa.id != interaction.user.id:
+                    avisos.append(f"{pessoa.mention}: só quem organizou (<@{m.host_id}>) pode tirar outras pessoas.")
+                    continue
+                try:
+                    self.db.sair_sem_jogo(m.id, pessoa.id)
+                    feitos.append(pessoa.mention)
+                except ErroMaratona as erro:
+                    avisos.append(f"{pessoa.mention}: {erro}")
+        if not feitos:
+            raise ErroMaratona("\n".join(avisos) or "Ninguém mudou.")
+        texto = (f"🙋 {', '.join(feitos)} {'entrou' if len(feitos) == 1 else 'entraram'} na maratona!"
+                 if acao == "incluir" else
+                 f"👋 {', '.join(feitos)} {'saiu' if len(feitos) == 1 else 'saíram'} da maratona.")
+        if avisos:
+            texto += "\n-# " + " · ".join(avisos)
+        await interaction.response.send_message(texto, allowed_mentions=SEM_PING)
+        await self.atualizar_painel(m.id)
 
     def validar_modo(self, modo: str, preco: Optional[int]) -> Optional[int]:
         try:
@@ -890,115 +1103,73 @@ class MaratonaCog(commands.Cog):
                                "não está configurada no bot.")
         return centavos
 
-    @maratona.command(name="modo", description="Muda quais jogos podem sair no sorteio (ex.: só os que todo mundo tem).")
-    @app_commands.describe(modo="Quais jogos podem sair no sorteio",
-                           preco="Só no modo \"só até R$ X\": o preço máximo, em reais")
-    @app_commands.choices(modo=ESCOLHAS_MODO)
-    async def cmd_modo(self, interaction: discord.Interaction, modo: app_commands.Choice[str],
-                       preco: Optional[app_commands.Range[int, 1, 500]] = None) -> None:
-        m = self.exigir_aberta(interaction)
+    async def aplicar_modo(self, interaction: discord.Interaction, maratona_id: int, modo: str,
+                           preco_reais: Optional[int]) -> None:
+        m = self.db.maratona(maratona_id)
+        if m is None or not m.aberta:
+            raise ErroMaratona("Essa maratona já terminou. 🏁")
         if not self.pode_organizar(interaction, m):
             raise ErroMaratona(f"Só quem organizou (<@{m.host_id}>) pode mudar o modo da roleta.")
-        centavos = self.validar_modo(modo.value, preco)
-        m = self.db.definir_modo(m.id, modo.value, centavos)
+        centavos = self.validar_modo(modo, preco_reais)
+        m = self.db.definir_modo(m.id, modo, centavos)
         explicacao = {
             "livre": "Qualquer jogo da roleta pode sair.",
             "todos_tem": "Só saem jogos que todo mundo (com Steam vinculada) já tem, ou que são grátis.",
             "ate_preco": "Só saem jogos que custam até esse valor para quem ainda não tem.",
-        }[modo.value]
+        }[modo]
         await interaction.response.send_message(
             f"🎯 Modo da roleta: **{modos.descricao(m.modo, m.modo_preco)}**\n{explicacao} "
             "Os outros jogos continuam na roleta e voltam a valer se o modo mudar.", allowed_mentions=SEM_PING)
         await self.atualizar_painel(m.id)
 
-    @maratona.command(name="painel", description="Traz o painel da maratona para o fim do chat.")
-    async def cmd_painel(self, interaction: discord.Interaction) -> None:
-        m = self.exigir_aberta(interaction)
-        antigo_canal, antiga_msg = m.channel_id, m.panel_message_id
-        await self.enviar_painel(interaction, m)
-        # Apaga o painel antigo para não ficarem dois painéis com botões.
-        canal = self.bot.get_channel(antigo_canal)
-        if canal is not None and antiga_msg is not None:
-            try:
-                await canal.get_partial_message(antiga_msg).delete()
-            except discord.HTTPException:
-                pass
+    # ---- ajuda -------------------------------------------------------
 
-    @maratona.command(name="sortear", description="Gira a roleta e sorteia o próximo jogo.")
-    async def cmd_sortear(self, interaction: discord.Interaction) -> None:
-        await self.sortear(interaction, self.exigir_aberta(interaction))
-
-    @maratona.command(name="encerrar", description="Encerra a maratona e mostra o resumo da noite.")
-    async def cmd_encerrar(self, interaction: discord.Interaction) -> None:
-        await self.pedir_encerramento(interaction, self.exigir_aberta(interaction))
-
-    @maratona.command(name="adicionar", description="Coloca um jogo na roleta (com sugestões da Steam enquanto digita).")
-    @app_commands.describe(jogo="Comece a digitar e escolha da lista")
-    async def cmd_adicionar(self, interaction: discord.Interaction,
-                            jogo: app_commands.Range[str, 1, 100]) -> None:
-        m = self.exigir_aberta(interaction)
-        await self.receber_nomes(interaction, [jogo], self.concluidor_roleta(m.id))
-
-    @cmd_adicionar.autocomplete("jogo")
-    async def _autocompletar_roleta(self, interaction: discord.Interaction, atual: str):
-        return await autocompletar_jogo(self.bot, interaction, atual)
-
-    @maratona.command(name="incluir", description="Coloca alguém na maratona mesmo sem jogo (chegou no meio).")
-    @app_commands.describe(pessoa="Quem chegou")
-    async def cmd_incluir(self, interaction: discord.Interaction, pessoa: discord.Member) -> None:
-        m = self.exigir_aberta(interaction)
-        if not self.pode_organizar(interaction, m):
-            raise ErroMaratona(f"Só quem organizou (<@{m.host_id}>) pode incluir outras pessoas. "
-                               "Cada um pode entrar sozinho pelo botão **🙋 Tô jogando**.")
-        if pessoa.bot:
-            raise ErroMaratona("Bots não jogam maratona. 🤖")
-        if not self.db.entrar_sem_jogo(m.id, pessoa.id):
-            raise ErroMaratona(f"{pessoa.mention} já está jogando.")
-        await interaction.response.send_message(f"🙋 {pessoa.mention} entrou na maratona!", allowed_mentions=SEM_PING)
-        await self.atualizar_painel(m.id)
-
-    @maratona.command(name="excluir", description="Tira da maratona alguém que entrou sem jogo.")
-    @app_commands.describe(pessoa="Quem saiu")
-    async def cmd_excluir(self, interaction: discord.Interaction, pessoa: discord.Member) -> None:
-        m = self.exigir_aberta(interaction)
-        if not self.pode_organizar(interaction, m) and pessoa.id != interaction.user.id:
-            raise ErroMaratona(f"Só quem organizou (<@{m.host_id}>) pode tirar outras pessoas.")
-        self.db.sair_sem_jogo(m.id, pessoa.id)
-        await interaction.response.send_message(f"👋 {pessoa.mention} saiu da maratona.", allowed_mentions=SEM_PING)
-        await self.atualizar_painel(m.id)
-
-    @maratona.command(name="baratos", description="Jogos multiplayer ordenados pelo custo para o grupo da maratona.")
-    async def cmd_baratos(self, interaction: discord.Interaction) -> None:
-        m = self.exigir_aberta(interaction)
-        steam = self.bot.get_cog("SteamCog")
-        if steam is None:
-            raise ErroMaratona("A parte da Steam do bot não está ligada.")
-        await steam.mostrar_baratos(interaction, m)
-
-    @maratona.command(name="ajuda", description="Explica como a maratona funciona.")
-    async def cmd_ajuda(self, interaction: discord.Interaction) -> None:
+    def embed_ajuda_maratona(self) -> discord.Embed:
         e = discord.Embed(title="🎮 Como funciona a maratona", color=COR_PAINEL, description=(
-            "**1.** Alguém abre a maratona com `/maratona criar` (ou marca para depois com `/maratona agendar`).\n"
-            "**2.** Cada um clica em **➕ Adicionar jogos** e escreve seus jogos, um por linha "
-            "(ou usa `/maratona adicionar`, que sugere o nome certinho enquanto digita). "
-            "Os jogos ficam secretos até serem sorteados.\n"
+            "**1.** Alguém usa `/maratona` e clica em **🎮 Abrir agora** (ou **📅 Agendar**, para depois).\n"
+            "**2.** Cada um clica em **➕ Adicionar jogos** no painel e escreve seus jogos, um por linha. "
+            "Os jogos ficam secretos até serem sorteados. Também dá para usar `/maratona jogo:…`, que sugere o "
+            "nome certinho enquanto você digita.\n"
             "**3.** Quem organizou clica em **🎲 Sortear**. O jogo que cair é o que todo mundo joga.\n"
-            "**Dica:** lembrou de um jogo no meio da semana? Use `/lista adicionar` para guardar. "
-            "Na maratona, sua lista aparece quando você clica em **Adicionar jogos**.\n"
-            "**4.** Reclamou do jogo? Use `/reclamou` (ou clique com o botão direito na pessoa → "
-            "Apps → **Reclamou!**). Vai pro **Mural da Vergonha**. 😤\n"
-            "**5.** Depois de cada jogo, o bot pede uma nota de 1 a 5 ⭐. As notas formam o `/ranking` "
-            "dos favoritos do grupo.\n"
+            "**4.** Reclamou do jogo? `/reclamou @pessoa` (ou botão direito na pessoa → Apps → **Reclamou!**). "
+            "Vai pro **Mural da Vergonha**. 😤\n"
+            "**5.** Depois de cada jogo, o bot pede uma nota de 1 a 5 ⭐.\n"
             "**6.** No fim, **🏁 Encerrar** mostra o resumo da noite.\n\n"
-            "Chegou no meio? Clique em **🙋 Tô jogando** no painel.\n"
-            "Não querem gastar? `/maratona baratos` mostra o que sai mais barato para o grupo, e "
-            "`/maratona modo` faz a roleta sortear só jogos que todo mundo tem (ou até um preço).\n"
-            "Jogo em equipe? `/times` sorteia os times.\n"
-            "Sem ideia de jogo? `/sugestao` e `/radar ver` dão sugestões.\n"
-            "Curioso com os números do grupo? `/stats` mostra as estatísticas de todas as maratonas.\n\n"
-            "Perdeu o painel no meio do chat? `/maratona painel` traz ele de volta.\n"
-            "Quer tirar um jogo seu antes de ser sorteado? **📋 Meus jogos**."
+            "**No menu \"Mais opções…\" do painel:** modo da roleta (só jogos que todo mundo tem, ou até um "
+            "preço), os mais baratos para o grupo, sortear times, quem tem a Steam vinculada, incluir ou tirar "
+            "alguém e trazer o painel para baixo.\n\n"
+            "Chegou no meio? **🙋 Tô jogando**. Quer tirar um jogo seu antes de sair? **📋 Meus jogos**.\n"
+            "Lembrou de um jogo no meio da semana? `/lista` guarda ele para a próxima maratona.\n"
+            "Todos os comandos: `/ajuda`."
         ))
+        e.set_thumbnail(url=url_nando(self.bot))
+        e.set_footer(text=f"MaratoNando · {ASSINATURA}")
+        return e
+
+    @app_commands.command(name="ajuda", description="Tudo o que o MaratoNando faz, num lugar só.")
+    async def cmd_ajuda(self, interaction: discord.Interaction) -> None:
+        e = discord.Embed(title="❓ O que o MaratoNando faz", color=COR_PAINEL, description=(
+            f"**Regra de ouro:** {ASSINATURA} 🫡\n"
+            "Quase tudo é por botões: os comandos abaixo abrem painéis com o resto."))
+        e.add_field(name="🎮 Maratona", inline=False, value=(
+            "`/maratona` abre (ou agenda) a maratona e mostra o painel: adicionar jogos, sortear, encerrar e o "
+            "menu **Mais opções…** (modo da roleta, mais baratos, times…).\n"
+            "`/reclamou @pessoa` manda para o Mural da Vergonha."))
+        e.add_field(name="🕹️ Jogar fora da maratona", inline=False, value=(
+            "`/bora` chama o pessoal para jogar (vagas, fila e horário).\n"
+            "`/o-que-jogar` sugere jogos para quantas pessoas vocês forem, mais **🔥 em alta**, **🎁 grátis** e o "
+            "**📡 radar dos streamers**.\n"
+            "`/times` sorteia times (da maratona, da sua call ou de quem você marcar)."))
+        e.add_field(name="📇 Jogos e pessoas", inline=False, value=(
+            "`/jogo` mostra a ficha de um jogo: preço, avaliações, nº de jogadores e quem do servidor tem.\n"
+            "`/lista` é a sua lista para as próximas maratonas (e a **🎁 lista do grupo**).\n"
+            "`/perfil` mostra horas, mais jogados e gêneros favoritos (e é onde você **vincula a Steam**).\n"
+            "`/stats` mostra os números do grupo, com o **🏆 ranking** dos jogos favoritos."))
+        perms = getattr(interaction.user, "guild_permissions", None)
+        if perms and perms.manage_guild:
+            e.add_field(name="⚙️ Só para admins", inline=False, value=(
+                "`/config` canal do bot, faxina, avisos, cargo de jogos e Steam dos outros.\n"
+                "`/radar` streamers acompanhados, preço máximo e canal de alertas."))
         e.set_thumbnail(url=url_nando(self.bot))
         e.set_footer(text=f"MaratoNando · {ASSINATURA}")
         await interaction.response.send_message(embed=e, ephemeral=True)
@@ -1035,7 +1206,7 @@ class MaratonaCog(commands.Cog):
                         title="🎯 Nenhum jogo da roleta vale nesse modo", color=COR_VERGONHA,
                         description=f"Modo: **{modos.descricao(m.modo, m.modo_preco)}**\n{aviso_modo}\n\n"
                                     "Coloquem jogos que passem no modo, ou quem organizou muda o modo com "
-                                    "`/maratona modo`."))
+                                    "**Mais opções… → 🎯 Modo da roleta**."))
                     return
             sorteio = self.db.sortear(m.id, permitidos)  # o resultado fica gravado antes do fim da animação
             if sorteio is None:
@@ -1226,7 +1397,7 @@ class MaratonaCog(commands.Cog):
         if sobras:
             e.add_field(name="📦 Ficaram na roleta (revelados!)",
                         value=juntar([f"**{j.nome}** — <@{j.user_id}>" for j in sobras]), inline=False)
-            e.set_footer(text="Os jogos que não saíram voltaram para a lista de quem colocou (/lista ver).")
+            e.set_footer(text="Os jogos que não saíram voltaram para a lista de quem colocou (/lista).")
         e.add_field(name="😤 Mural da Vergonha",
                     value=juntar(ranking(mural), vazio="Ninguém reclamou. Que grupo exemplar! 😇"), inline=False)
         return e
@@ -1243,7 +1414,7 @@ class MaratonaCog(commands.Cog):
         )
         e.add_field(name="Nota do grupo", value=resumo_nota(media, quantas))
         e.set_thumbnail(url=url_nando(self.bot))
-        e.set_footer(text="As notas formam o /ranking dos jogos favoritos do grupo.")
+        e.set_footer(text="As notas formam o ranking dos jogos favoritos do grupo (/stats → 🏆).")
         return e
 
     async def pedir_notas(self, canal, jogo: Jogo, proximo: Optional[str] = None) -> None:
@@ -1267,10 +1438,9 @@ class MaratonaCog(commands.Cog):
         await interaction.followup.send(f"Sua nota para **{jogo.nome}**: {estrelas(nota)} ({nota}). Valeu!",
                                         ephemeral=True)
 
-    @app_commands.command(name="ranking", description="Os jogos favoritos do grupo, pelas notas das maratonas.")
-    @app_commands.guild_only()
-    async def cmd_ranking(self, interaction: discord.Interaction) -> None:
-        jogos = ranking_notas(self.db.notas_do_servidor(interaction.guild_id))
+    def embed_ranking(self, guild_id: int) -> discord.Embed:
+        """Os jogos favoritos do grupo, pelas notas (botão 🏆 do /stats)."""
+        jogos = ranking_notas(self.db.notas_do_servidor(guild_id))
         linhas = []
         for i, j in enumerate(jogos[:10]):
             posicao = MEDALHAS[i] if i < len(MEDALHAS) else f"`{i + 1}.`"
@@ -1286,7 +1456,16 @@ class MaratonaCog(commands.Cog):
         e.set_thumbnail(url=url_nando(self.bot))
         e.set_footer(text=f"Média das notas de todas as maratonas · só entram jogos com "
                           f"{MINIMO_NOTAS_RANKING} notas ou mais")
-        await interaction.response.send_message(embed=e, allowed_mentions=SEM_PING)
+        return e
+
+    def embed_mural_completo(self, guild_id: int) -> discord.Embed:
+        """O Mural da Vergonha de todos os tempos, inteiro (botão 😤 do /stats)."""
+        e = discord.Embed(title="😤 Mural da Vergonha (todos os tempos)", color=COR_VERGONHA,
+                          description=juntar(ranking(self.db.stats_mural(guild_id)), limite=4000,
+                                             vazio="Ninguém nunca reclamou. Grupo exemplar! 😇"))
+        e.set_thumbnail(url=url_nando(self.bot, "surpreso"))
+        e.set_footer(text=ASSINATURA)
+        return e
 
     # ---- estatísticas do grupo --------------------------------------
 
@@ -1296,7 +1475,7 @@ class MaratonaCog(commands.Cog):
         maratonas = self.db.stats_maratonas(interaction.guild_id)
         if not maratonas:
             raise ErroMaratona("Este servidor ainda não teve nenhuma maratona. Que tal abrir a primeira com "
-                               "`/maratona criar`? 🎮")
+                               "`/maratona`? 🎮")
         jogos = self.db.stats_jogos(interaction.guild_id)
         r = estatisticas.resumo(maratonas, jogos)
 
@@ -1318,7 +1497,7 @@ class MaratonaCog(commands.Cog):
         if favoritos:
             f = favoritos[0]
             e.add_field(name="⭐ Favorito do grupo",
-                        value=f"**{f.nome}** — {estrelas(f.media)} {numero(f.media)}\nVeja o resto no `/ranking`",
+                        value=f"**{f.nome}** — {estrelas(f.media)} {numero(f.media)}\nVeja o resto no **🏆 Ranking dos jogos** aqui embaixo",
                         inline=False)
         e.add_field(name="😤 Mural da Vergonha (todos os tempos)",
                     value=juntar(ranking(self.db.stats_mural(interaction.guild_id)[:3]),
@@ -1327,54 +1506,23 @@ class MaratonaCog(commands.Cog):
         e.add_field(name="📅 Maratonas por mês", value=f"```\n{estatisticas.barras(meses)}\n```", inline=False)
         e.set_thumbnail(url=url_nando(self.bot))
         e.set_footer(text="As horas vão da abertura ao encerramento de cada maratona (no máximo 12h por noite).")
-        await interaction.response.send_message(embed=e, allowed_mentions=SEM_PING)
+        await interaction.response.send_message(embed=e, view=StatsView(self), allowed_mentions=SEM_PING)
 
     # ---- /lista ----------------------------------------------------
 
-    @lista.command(name="adicionar", description="Guarda jogos na sua lista para a próxima maratona.")
-    @app_commands.describe(jogo="Nome do jogo (aparecem sugestões enquanto digita; vazio = escrever vários)")
-    async def cmd_lista_adicionar(self, interaction: discord.Interaction,
-                                  jogo: Optional[app_commands.Range[str, 1, 100]] = None) -> None:
-        if jogo is None:
-            await interaction.response.send_modal(SalvarNaListaModal(self))
-        else:
+    @app_commands.command(name="lista", description="Sua lista de jogos para as próximas maratonas (e a lista do grupo).")
+    @app_commands.describe(jogo="Opcional: um jogo para guardar na lista (aparecem sugestões da Steam)")
+    async def cmd_lista(self, interaction: discord.Interaction,
+                        jogo: Optional[app_commands.Range[str, 1, 100]] = None) -> None:
+        if jogo:
             await self.receber_nomes(interaction, [jogo], self.concluir_lista)
-
-    @cmd_lista_adicionar.autocomplete("jogo")
-    async def _autocompletar_lista(self, interaction: discord.Interaction, atual: str):
-        return await autocompletar_jogo(self.bot, interaction, atual)
-
-    @lista.command(name="remover", description="Tira um jogo da sua lista.")
-    @app_commands.describe(jogo="Comece a digitar e escolha um jogo da sua lista")
-    async def cmd_lista_remover(self, interaction: discord.Interaction, jogo: str) -> None:
-        itens = self.db.lista(interaction.user.id)
-        alvo = next((i for i in itens if str(i.id) == jogo), None)  # escolhido do autocompletar
-        if alvo is None:  # digitou o nome em vez de escolher
-            alvo = next((i for i in itens if mesmo_jogo(i.nome, jogo)), None)
-        if alvo is None:
-            raise ErroMaratona(f"Não achei **{jogo}** na sua lista. Use `/lista ver` para ver o que tem nela.")
-        self.db.remover_da_lista(interaction.user.id, alvo.id)
-        await interaction.response.send_message(f"🗑️ **{alvo.nome}** saiu da sua lista.", ephemeral=True)
-
-    @cmd_lista_remover.autocomplete("jogo")
-    async def _autocompletar_remover(self, interaction: discord.Interaction, atual: str):
-        return [app_commands.Choice(name=i.nome[:100], value=str(i.id))
-                for i in self.db.lista(interaction.user.id)
-                if atual.casefold().strip() in i.nome.casefold()][:25]
-
-    @lista.command(name="grupo", description="Lista de desejos do grupo: os jogos que mais gente daqui quer.")
-    async def cmd_lista_grupo(self, interaction: discord.Interaction) -> None:
-        if interaction.guild_id is None:
-            raise ErroMaratona("Esse comando só funciona dentro de um servidor.")
-        steam = self.bot.get_cog("SteamCog")
-        if steam is None:
-            raise ErroMaratona("A parte da Steam do bot não está ligada.")
-        await steam.mostrar_desejos(interaction)
-
-    @lista.command(name="ver", description="Mostra (só para você) os jogos da sua lista.")
-    async def cmd_lista_ver(self, interaction: discord.Interaction) -> None:
+            return
         view = MinhaListaView(self, interaction.user.id)
         await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True)
+
+    @cmd_lista.autocomplete("jogo")
+    async def _autocompletar_lista(self, interaction: discord.Interaction, atual: str):
+        return await autocompletar_jogo(self.bot, interaction, atual)
 
     # ---- mural da vergonha -----------------------------------------
 
@@ -1409,6 +1557,27 @@ class MaratonaCog(commands.Cog):
         e.set_footer(text=ASSINATURA)
         await interaction.response.send_message(embed=e, allowed_mentions=SEM_PING)
         await self.atualizar_painel(m.id)
+
+
+class StatsView(discord.ui.View):
+    """Botões do /stats: o ranking dos jogos favoritos e o Mural da Vergonha inteiro."""
+
+    def __init__(self, cog: MaratonaCog) -> None:
+        super().__init__(timeout=1800)
+        self.cog = cog
+
+    async def on_error(self, interaction, erro, item) -> None:
+        await tratar_erro(interaction, erro)
+
+    @discord.ui.button(label="Ranking dos jogos", emoji="🏆", style=discord.ButtonStyle.primary)
+    async def ranking_jogos(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interaction.response.send_message(embed=self.cog.embed_ranking(interaction.guild_id),
+                                                allowed_mentions=SEM_PING)
+
+    @discord.ui.button(label="Mural da Vergonha", emoji="😤", style=discord.ButtonStyle.secondary)
+    async def mural(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interaction.response.send_message(embed=self.cog.embed_mural_completo(interaction.guild_id),
+                                                allowed_mentions=SEM_PING)
 
 
 async def setup(bot: commands.Bot) -> None:

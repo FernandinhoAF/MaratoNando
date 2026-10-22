@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from radar import CATEGORIAS_COOP, CATEGORIAS_MULTIPLAYER
 
 STEAMID_BASE = 76561197960265728  # todo SteamID64 de usuário começa a partir daqui
-MAX_CANDIDATOS = 150              # jogos analisados por vez no /maratona baratos
+MAX_CANDIDATOS = 150              # jogos analisados por vez no "mais baratos para o grupo"
 
 
 # ---------------------------------------------------------------- perfil

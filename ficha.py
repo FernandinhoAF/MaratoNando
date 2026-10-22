@@ -1,4 +1,4 @@
-"""Textos da ficha do jogo (/jogo ver), a partir das respostas da loja da Steam.
+"""Textos da ficha do jogo (/jogo), a partir das respostas da loja da Steam.
 
 Módulo puro (sem Discord nem internet), testado em tests/test_ficha.py.
 """

@@ -1,4 +1,4 @@
-"""/maratona agendar: marca a maratona para depois.
+"""Maratona agendada (/maratona → 📅 Agendar): marca a maratona para depois.
 
   • Posta uma mensagem com ✅ Eu vou · 🤔 Talvez · ❌ Não vou (e 🗑️ Cancelar para quem marcou).
   • Cria um evento no calendário do servidor (se o bot tiver a permissão "Gerenciar eventos").
@@ -93,7 +93,7 @@ class AgendaCog(commands.Cog):
             e.description = (f"{quando}\nMarcada por <@{ag.host_id}>.\n\n"
                              f"{agenda.LEMBRETE_MINUTOS} minutos antes, o bot abre a maratona aqui e chama o pessoal "
                              "(o cargo de jogos e quem confirmou). Enquanto isso, vão separando os jogos com "
-                             "`/lista adicionar`!")
+                             "`/lista`!")
         elif ag.status == "aberto":
             e.description = f"{quando}\n**Começou!** A maratona foi aberta aqui no canal. 🎮"
         elif ag.status == "cancelado":
@@ -124,7 +124,7 @@ class AgendaCog(commands.Cog):
         except discord.HTTPException as exc:
             log.warning("Não consegui atualizar o agendamento %s: %s", ag.id, exc)
 
-    # ---- comando (chamado pelo /maratona agendar, no cog da maratona) -
+    # ---- agendar (chamado pelo botão 📅 Agendar do /maratona) ---------
 
     async def agendar(self, interaction: discord.Interaction, dia: str, hora: str, nome: Optional[str],
                       call: Optional[discord.abc.GuildChannel]) -> None:

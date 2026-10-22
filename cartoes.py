@@ -217,5 +217,5 @@ def card_resumo(nome: str, jogos: list[tuple[str, str]], cabecalho: str,
 
     # Nando (regata verde) e a chamada final
     _colar_nando(img, "nando-sorriso-verde.png", 78, direita, ALTURA - MARGEM + 8)
-    _escrever(d, x, ALTURA - MARGEM - 16, "GG A TODOS! CONTINUE? /MARATONA CRIAR", PIXEL, 16, VERDE)
+    _escrever(d, x, ALTURA - MARGEM - 16, "GG A TODOS! CONTINUE? /MARATONA", PIXEL, 16, VERDE)
     return _png(img)

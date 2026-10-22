@@ -1,4 +1,4 @@
-"""Vagas do /chamar (e do /bora): quem está dentro, quem está na fila e quem acabou de ganhar a vaga.
+"""Vagas do /bora: quem está dentro, quem está na fila e quem acabou de ganhar a vaga.
 
 Regra: com N vagas, os N primeiros que clicaram "Bora" estão dentro; o resto fica na fila, na ordem
 em que clicou. Se alguém de dentro sai, o primeiro da fila sobe sozinho.

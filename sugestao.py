@@ -1,4 +1,4 @@
-"""Sugestões só pela Steam (/sugestao): como achar friendslop sem a ajuda de um streamer.
+"""Sugestões só pela Steam (botões 🔥/🆕/💸 do /o-que-jogar): como achar friendslop sem a ajuda de um streamer.
 
 Sem um humano filtrando, quem decide são as **tags** (etiquetas que os próprios
 jogadores colocam nos jogos). A busca da Steam devolve, para cada jogo, as suas
@@ -38,7 +38,7 @@ TAGS_PROIBIDAS = {
 APROVACAO_MINIMA = 0.80
 MIN_AVALIACOES = 200
 
-# Tipos de busca do /sugestao → parâmetros da busca da Steam.
+# Tipos de busca das sugestões da loja → parâmetros da busca da Steam.
 TIPOS = {
     "em_alta": {"filter": "topsellers"},
     "novidades": {"filter": "popularnew"},

@@ -1,11 +1,10 @@
-"""Contas da Steam e o /maratona baratos.
+"""Tudo que fala com a Steam: contas, bibliotecas, loja e o "mais barato para o grupo".
 
-  • /steam vincular perfil:<link> [pessoa:@alguém]  liga a conta da Steam de alguém ao Discord.
-    Qualquer um vincula a própria conta; quem tem "Gerenciar servidor" pode vincular a dos outros.
-  • /steam desvincular [pessoa]  e  /steam ver.
-  • /maratona baratos (o comando fica no cogs/maratona.py e chama mostrar_baratos daqui):
-    lê as bibliotecas de quem está jogando a maratona, descobre quais jogos são multiplayer
-    e quanto custam, e mostra o ranking do mais barato para o grupo.
+  • Vincular a conta: botão 🔗 Vincular Steam do /perfil (cada um a sua) ou /config steam
+    (admins, a de outra pessoa). Desvincular também é pelo /perfil.
+  • Mais baratos e "quem tem a Steam vinculada": menu "Mais…" do painel da maratona.
+    Lê as bibliotecas de quem está jogando, descobre quais jogos são multiplayer e quanto
+    custam, e mostra do mais barato para o grupo ao mais caro.
 """
 
 import asyncio
@@ -17,7 +16,6 @@ from typing import Optional
 
 import aiohttp
 import discord
-from discord import app_commands
 from discord.ext import commands
 
 from biblioteca import (AppSteam, Opcao, app_da_linha, app_de_detalhes, calcular_opcoes,
@@ -36,13 +34,13 @@ log = logging.getLogger("maratonando.steam")
 
 COR_STEAM = COR_DETALHE  # ciano (Manual da Marca)
 BIBLIOTECA_VALIDA_HORAS = 6   # depois disso, lê a biblioteca de novo (alguém pode ter comprado jogo)
-MOSTRAR_DESEJOS = 12        # jogos no /lista grupo
+MOSTRAR_DESEJOS = 12        # jogos na lista do grupo (botão 🎁 do /lista)
 LOJA_VALIDA_DIAS = 3          # preço/promoção mudam: confere de novo a cada 3 dias
-ANALISAR_POR_VEZ = 60         # jogos novos consultados na loja por /maratona baratos
+ANALISAR_POR_VEZ = 60         # jogos novos consultados na loja pelo "mais baratos" do painel
 POR_PAGINA = 10
 
 COMO_DEIXAR_PUBLICO = ("Na Steam: **Perfil → Editar perfil → Configurações de privacidade → "
-                       "Detalhes do jogo: Público**. Depois é só rodar o `/steam vincular` de novo.")
+                       "Detalhes do jogo: Público**. Depois é só vincular de novo pelo `/perfil`.")
 
 
 def antes_de(iso: Optional[str], **delta) -> bool:
@@ -111,7 +109,7 @@ class BaratosView(discord.ui.View):
         if self.sem_steam:
             e.add_field(name=f"❔ Fora da conta ({len(self.sem_steam)})",
                         value=juntar([f"<@{u}>" for u in self.sem_steam]) +
-                        "\n-# Sem Steam vinculada ou com jogos privados. Use `/steam vincular`.")
+                        "\n-# Sem Steam vinculada ou com jogos privados. Vincule pelo `/perfil`.")
         rodape = f"Página {self.pagina + 1} de {self.paginas}"
         if self.pendentes:
             rodape += (f" · Ainda estou analisando {plural(self.pendentes, 'jogo', 'jogos')} na loja; "
@@ -123,8 +121,8 @@ class BaratosView(discord.ui.View):
 # ---------------------------------------------------------------- cog
 
 class SteamCog(commands.Cog):
-    steam = app_commands.Group(name="steam", description="Contas da Steam (para o bot saber quem tem cada jogo).",
-                               guild_only=True)
+    """Tudo que conversa com a Steam. Não tem comandos próprios: vincular a conta é pelo /perfil
+    (ou /config steam, para admins vincularem a de outra pessoa), e o resto aparece nos painéis."""
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -143,7 +141,7 @@ class SteamCog(commands.Cog):
         if chave:
             self.api = SteamAPI(self.session, chave)
         else:
-            log.warning("STEAM_API_KEY não configurada: /steam e /maratona baratos ficam desligados.")
+            log.warning("STEAM_API_KEY não configurada: as partes da Steam (perfil, mais baratos, quem tem) ficam desligadas.")
 
     async def cog_unload(self) -> None:
         if self.session:
@@ -339,7 +337,7 @@ class SteamCog(commands.Cog):
             log.warning("Não consegui calcular os mais baratos: %s", exc)
             return []
 
-    # ---- /lista grupo ------------------------------------------------
+    # ---- lista do grupo (botão 🎁 do /lista) -----------------------------
 
     async def mostrar_desejos(self, interaction: discord.Interaction) -> None:
         guild_id = interaction.guild_id
@@ -353,8 +351,8 @@ class SteamCog(commands.Cog):
         bibliotecas = self.db.bibliotecas(ids)
         linhas = self.db.desejos_do_servidor(guild_id)
         if not linhas:
-            raise ErroMaratona("Ninguém tem jogos na lista ainda. Use `/lista adicionar` (ou vincule a Steam com "
-                               "`/steam vincular`, que o bot lê a sua lista de desejos de lá).")
+            raise ErroMaratona("Ninguém tem jogos na lista ainda. Use `/lista` (ou vincule a Steam com "
+                               "vincule a Steam pelo `/perfil`, que o bot lê a sua lista de desejos de lá).")
         primeiros = [d.appid for d in agrupar(linhas, bibliotecas)][:MOSTRAR_DESEJOS * 2]
         try:
             await self.analisar_na_loja(primeiros, MOSTRAR_DESEJOS * 2)  # nome, preço e desconto atuais
@@ -386,7 +384,7 @@ class SteamCog(commands.Cog):
                           "🔥 = 2 ou mais pessoas querem: o bot avisa quando entrar em promoção.")
         await interaction.followup.send(embed=e, allowed_mentions=SEM_PING)
 
-    # ---- /maratona baratos -----------------------------------------
+    # ---- mais baratos para o grupo (menu "Mais…" do painel) ------------
 
     async def mostrar_baratos(self, interaction: discord.Interaction, m: Maratona) -> None:
         self.exigir_api()
@@ -407,7 +405,7 @@ class SteamCog(commands.Cog):
             bibliotecas = self.db.bibliotecas(jogadores)
             if not bibliotecas:
                 raise ErroMaratona("Ninguém que está jogando tem a Steam vinculada (com jogos públicos). "
-                                   "Use `/steam vincular` primeiro.")
+                                   "Cada um vincula a sua pelo `/perfil`.")
             da_lista = self.db.appids_das_listas_de(jogadores)
             candidatos = escolher_candidatos(bibliotecas, da_lista)
             pendentes = await self.analisar_na_loja(candidatos, ANALISAR_POR_VEZ, progresso)
@@ -432,13 +430,12 @@ class SteamCog(commands.Cog):
         except Exception:
             log.exception("Erro analisando jogos em segundo plano")
 
-    # ---- /steam ----------------------------------------------------
 
-    @steam.command(name="vincular", description="Liga uma conta da Steam ao Discord (a sua ou, se for admin, a de outra pessoa).")
-    @app_commands.describe(perfil="Link do perfil na Steam (ex.: https://steamcommunity.com/id/fulano)",
-                           pessoa="De quem é a conta (deixe vazio para a sua)")
-    async def cmd_vincular(self, interaction: discord.Interaction, perfil: str,
-                           pessoa: Optional[discord.Member] = None) -> None:
+    # ---- vincular a conta (botão do /perfil e /config steam) ----------
+
+    async def vincular(self, interaction: discord.Interaction, perfil: str,
+                       pessoa: Optional[discord.Member] = None) -> None:
+        """Liga uma conta da Steam ao Discord: a de quem clicou ou, para admins, a de outra pessoa."""
         api = self.exigir_api()
         alvo = self.alvo(interaction, pessoa)
         lido = ler_perfil(perfil)
@@ -465,17 +462,14 @@ class SteamCog(commands.Cog):
             texto += f" ({plural(total, 'jogo', 'jogos')})."
         await interaction.followup.send(texto, ephemeral=True, allowed_mentions=SEM_PING)
 
-    @steam.command(name="desvincular", description="Desliga a conta da Steam (a sua ou, se for admin, a de outra pessoa).")
-    @app_commands.describe(pessoa="De quem (deixe vazio para a sua)")
-    async def cmd_desvincular(self, interaction: discord.Interaction,
-                              pessoa: Optional[discord.Member] = None) -> None:
+    async def desvincular(self, interaction: discord.Interaction, pessoa: Optional[discord.Member] = None) -> None:
         alvo = self.alvo(interaction, pessoa)
         if not self.db.desvincular_steam(alvo.id):
             raise ErroMaratona("Não tinha Steam vinculada.")
         await interaction.response.send_message("🗑️ Steam desvinculada e a lista de jogos apagada.", ephemeral=True)
 
-    @steam.command(name="ver", description="Mostra quem da maratona tem a Steam vinculada.")
-    async def cmd_ver(self, interaction: discord.Interaction) -> None:
+    async def mostrar_contas(self, interaction: discord.Interaction) -> None:
+        """Quem da maratona tem a Steam vinculada (menu "Mais…" do painel)."""
         m = self.db.maratona_aberta(interaction.guild_id)
         pessoas = self.db.jogadores(m.id) if m else [interaction.user.id]
         contas = self.db.contas_steam(pessoas)
@@ -491,8 +485,8 @@ class SteamCog(commands.Cog):
         e = discord.Embed(title="🎮 Contas da Steam" + (" da maratona" if m else ""), color=COR_STEAM,
                           description=juntar(linhas, limite=4000))
         if any(c is None or not c["publico"] for c in (contas.get(u) for u in pessoas)):
-            e.set_footer(text="Quem tem 'Gerenciar servidor' pode vincular pelos outros: "
-                              "/steam vincular perfil:<link> pessoa:@alguém")
+            e.set_footer(text="Cada um vincula a sua pelo /perfil. Admins podem vincular pelos outros: "
+                              "/config steam pessoa:@alguém perfil:<link>")
         await interaction.response.send_message(embed=e, ephemeral=True, allowed_mentions=SEM_PING)
 
 

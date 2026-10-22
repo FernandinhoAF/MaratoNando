@@ -232,7 +232,7 @@ CREATE TABLE IF NOT EXISTS steam_apps (
     verificado_em  TEXT    NOT NULL
 );
 
--- ===== /chamar =====
+-- ===== /bora (chamados para jogar) =====
 
 CREATE TABLE IF NOT EXISTS chamados (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -272,7 +272,7 @@ CREATE TABLE IF NOT EXISTS gratis_avisados (
 
 -- Quantas pessoas cada jogo da Steam aceita (/o-que-jogar).
 -- fonte 'steam' = lido da descrição da loja (minimo/maximo NULL = a descrição não diz);
--- fonte 'grupo' = alguém ensinou com /jogo jogadores, e isso nunca é sobrescrito pela Steam.
+-- fonte 'grupo' = alguém ensinou pelo botão 👥 do /jogo, e isso nunca é sobrescrito pela Steam.
 CREATE TABLE IF NOT EXISTS jogadores_jogo (
     appid         INTEGER PRIMARY KEY,
     minimo        INTEGER,
@@ -282,7 +282,7 @@ CREATE TABLE IF NOT EXISTS jogadores_jogo (
     atualizado_em TEXT    NOT NULL
 );
 
--- Maratonas marcadas para depois (/maratona agendar).
+-- Maratonas marcadas para depois (/maratona → 📅 Agendar).
 CREATE TABLE IF NOT EXISTS agendamentos (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     guild_id   INTEGER NOT NULL,
@@ -325,7 +325,7 @@ MIGRACOES = [
     ("jogos", "appid", "INTEGER"),                       # jogo da Steam (quando o bot reconheceu)
     ("jogos", "nota_pedida_em", "TEXT"),                 # quando o bot postou os botões de nota deste jogo
     ("limpeza_config", "avisar_gratis", "INTEGER NOT NULL DEFAULT 1"),  # avisar jogos grátis (Epic/Steam)
-    ("chamados", "inicio", "TEXT"),                      # horário marcado no /chamar (ISO, UTC); NULL = agora
+    ("chamados", "inicio", "TEXT"),                      # horário marcado no /bora (ISO, UTC); NULL = agora
     ("chamados", "lembrado", "INTEGER NOT NULL DEFAULT 0"),  # já avisou "hora de jogar"?
     ("chamado_respostas", "ordem", "INTEGER"),           # ordem dos cliques (decide a fila de espera)
     ("steam_biblioteca", "minutos", "INTEGER NOT NULL DEFAULT 0"),       # tempo de jogo total
@@ -882,7 +882,7 @@ class Database:
         ).fetchall()
         return [(r[0], r[1], r[2], r[3]) for r in rows]
 
-    # ---- ficha do jogo (/jogo ver) --------------------------------------
+    # ---- ficha do jogo (/jogo) ------------------------------------------
 
     def usuarios_com_steam(self, guild_id: int) -> list[int]:
         """Quem usa o bot neste servidor e tem a Steam vinculada."""
@@ -1549,7 +1549,7 @@ class Database:
             )
         return True
 
-    # ---- /chamar ---------------------------------------------------
+    # ---- /bora (chamados) ----------------------------------------------
 
     def criar_chamado(self, guild_id: int, channel_id: int, autor_id: int,
                       jogo: str | None, pessoas: int | None, inicio: str | None = None) -> int:

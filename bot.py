@@ -52,7 +52,7 @@ class MaratoNando(commands.Bot):
 
     async def on_ready(self) -> None:
         log.info("Logado como %s (id %s) em %d servidor(es)", self.user, self.user.id, len(self.guilds))
-        await self.change_presence(activity=discord.Game("/maratona criar"))
+        await self.change_presence(activity=discord.Game("/maratona · /ajuda"))
 
     async def close(self) -> None:
         await super().close()

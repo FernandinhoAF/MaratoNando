@@ -21,7 +21,8 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 - **👥 Sorteio de times** (`/times`): começa a lista com quem está jogando a maratona (ou, sem maratona aberta, com quem está na call), pergunta se mais alguém vai jogar e só então sorteia times equilibrados.
 - **🧹 Chat limpo**: com `/config canal-do-bot`, o bot ganha um canal próprio onde as mensagens ficam. Em qualquer outro canal, as mensagens dele somem sozinhas depois de alguns minutos (padrão: 10). Se alguém estiver usando os botões de uma mensagem, o prazo recomeça; e o painel de uma maratona aberta só some depois que ela acaba.
 - **🎁 Jogos grátis** (`/gratis`): o grátis da semana da **Epic Games** (e os próximos) e os jogos **100% off da Steam** (de graça para sempre, não os free-to-play de sempre), com imagem, até quando vale e quanto custaria. A cada 3 horas o bot confere e, quando aparece jogo grátis novo, avisa no canal do bot, sem marcar ninguém e sem repetir. Liga/desliga com `/config gratis`.
-- **💸 Avisos de promoção**: a cada 6 horas o bot confere na Steam o preço dos jogos que estão nas listas pessoais. Quando um deles entra em promoção (ou o desconto aumenta), ele avisa no canal do bot marcando (com notificação) só quem tem aquele jogo na lista. O `/lista ver` também mostra quais jogos da sua lista estão em promoção.
+- **🎁 Lista de desejos do grupo** (`/lista grupo`): junta a `/lista` de cada um com a **lista de desejos da Steam** de quem vinculou a conta (o bot lê junto com a biblioteca) e mostra os jogos que mais gente do servidor quer, com preço, desconto e quantos já têm. Quem já comprou sai da conta. 🔥 = **desejo do grupo** (2 ou mais pessoas querem).
+- **💸 Avisos de promoção**: a cada 6 horas o bot confere na Steam o preço dos jogos que estão nas listas pessoais. Quando um deles entra em promoção (ou o desconto aumenta), ele avisa no canal do bot marcando (com notificação) só quem tem aquele jogo na lista. O `/lista ver` também mostra quais jogos da sua lista estão em promoção. Os **desejos do grupo** também entram: quando um jogo que 2 ou mais pessoas querem (na `/lista` ou na lista de desejos da Steam) entra em promoção, o bot marca todo mundo que quer. Um jogo que só uma pessoa tem na lista de desejos da Steam não é avisado (a própria Steam já manda e-mail).
 - **💰 Mais barato para o grupo** (`/maratona baratos`): cada pessoa vincula a Steam (ou um admin vincula por ela), e o bot cruza as bibliotecas de quem está jogando a maratona. Mostra os jogos multiplayer do mais barato para o grupo ao mais caro: o custo é o preço atual × quantas pessoas ainda não têm. Primeiro aparecem os que todo mundo já tem e os grátis. O mesmo cálculo aparece **no sorteio** ("✅ 3 têm · 🛒 falta para @Bia, R$ 14,87") e, só para quem está colocando, **ao colocar um jogo na roleta**, para todo mundo pensar no bolso dos amigos.
 - **🎯 Modos da roleta** (`/maratona modo`, ou o `modo` do `/maratona criar`): quem organizou escolhe quais jogos podem sair no sorteio. **✅ Ninguém precisa comprar**: só saem jogos que todo mundo (com Steam vinculada) já tem, ou que são grátis. **💸 Só até R$ X**: só saem jogos que custam até esse valor para quem ainda não tem. **🎲 Livre**: qualquer jogo (o normal). Com um modo ligado, a roleta aparece na hora e o bot confere na Steam, enquanto ela gira, quais jogos valem; os que não valem continuam na roleta e voltam a valer se o modo mudar. Jogos que não dá para conferir na Steam (de fora da Steam, sem preço no Brasil) ficam de fora, para ninguém ser pego de surpresa pagando. O painel e a revelação mostram o modo e quantos jogos ficaram de fora.
 - **🙋 Chegou no meio?** O botão **Tô jogando** do painel coloca a pessoa na maratona mesmo sem jogo na roleta, e ela passa a contar nos times e no `/maratona baratos`.
@@ -55,6 +56,7 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 | `/maratona ajuda` | Explica como funciona | Qualquer pessoa |
 | `/lista adicionar [jogo]` | Guarda um jogo na sua lista pessoal (sem o nome, abre um formulário para vários) | Qualquer pessoa (só ela vê) |
 | `/lista ver` | Mostra sua lista; dá para tirar vários jogos de uma vez e conferir os nomes na Steam | Qualquer pessoa (só ela vê) |
+| `/lista grupo` | Lista de desejos do grupo: os jogos que mais gente do servidor quer (listas do bot + listas de desejos da Steam) | Qualquer pessoa |
 | `/lista remover jogo` | Tira um jogo da sua lista (sugere os jogos dela enquanto digita) | Qualquer pessoa (só ela vê) |
 | `/reclamou @pessoa` | Manda alguém pro Mural da Vergonha | Qualquer pessoa |
 | `/stats` | Estatísticas do grupo: maratonas, horas, jogos mais sorteados, quem mais coloca jogo, mural de todos os tempos e maratonas por mês | Qualquer pessoa |
@@ -200,6 +202,7 @@ MaratoNando/
 ├── times.py           # divisão equilibrada em times
 ├── biblioteca.py      # custo para o grupo: cruza as bibliotecas da Steam
 ├── nomes.py           # nomes parecidos, repetidos e o "você quis dizer…?"
+├── desejos.py         # lista de desejos do grupo: quem quer qual jogo
 ├── gratis.py          # jogos grátis: leitura da Epic e dos 100% off da Steam
 ├── ficha.py           # textos da ficha do jogo (/jogo ver)
 ├── modos.py           # modos da roleta: quais jogos podem sair no sorteio
@@ -236,6 +239,7 @@ MaratoNando/
 │   ├── test_biblioteca.py # testes do custo para o grupo e das contas Steam
 │   ├── test_chamar.py # testes do cargo de jogos e do /chamar
 │   ├── test_nomes.py  # testes de nomes digitados com erro e repetidos
+│   ├── test_desejos.py # testes da lista de desejos do grupo
 │   ├── test_gratis.py # testes dos jogos grátis (com a resposta real da Epic)
 │   ├── test_ficha.py  # testes da ficha do jogo
 │   ├── test_modos.py  # testes dos modos da roleta

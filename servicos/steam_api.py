@@ -40,6 +40,12 @@ class SteamAPI:
         jogadores = dados.get("response", {}).get("players", [])
         return jogadores[0] if jogadores else None
 
+    async def desejos(self, steamid: str) -> list[int]:
+        """Lista de desejos da Steam da conta: [appid, ...]. Vazia se for privada ou não tiver nada."""
+        dados = await self._get("/IWishlistService/GetWishlist/v1/", {"steamid": steamid})
+        itens = (dados.get("response") or {}).get("items") or []
+        return [int(i["appid"]) for i in itens if i.get("appid")]
+
     async def jogos(self, steamid: str) -> list[dict] | None:
         """Jogos da conta: [{appid, name, playtime_forever, ...}].
 

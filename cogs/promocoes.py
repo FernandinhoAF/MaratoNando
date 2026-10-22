@@ -1,4 +1,4 @@
-"""Avisa quando um jogo das listas pessoais entra em promoção na Steam.
+"""Avisa quando um jogo das listas pessoais (ou um desejo do grupo) entra em promoção na Steam.
 
 Como funciona (a cada 6 horas, e uma vez logo que o bot liga):
   1. Cada nome de jogo das listas é procurado na Steam (só uma vez; o resultado fica guardado).
@@ -7,6 +7,10 @@ Como funciona (a cada 6 horas, e uma vez logo que o bot liga):
      (/config canal-do-bot) de cada servidor onde alguém que tem esse jogo na lista usa o bot.
      O aviso marca (com notificação) só quem tem o jogo na lista. Nada de DM.
   4. Quando a promoção acaba, o bot esquece dela; se o jogo entrar em promoção de novo, avisa de novo.
+
+Desejo do grupo = jogo da lista de desejos da Steam que 2 ou mais pessoas do mesmo servidor querem
+(contando a /lista também). Esses entram no aviso, marcando todo mundo que quer. Um jogo que só uma
+pessoa tem na lista de desejos da Steam não é avisado aqui (a própria Steam já manda e-mail disso).
 """
 
 import asyncio
@@ -71,9 +75,16 @@ class PromocoesCog(commands.Cog):
                     self.db.salvar_steam_nome(nome, escolher_resultado(nome, await self.steam.buscar(nome)))
                     await asyncio.sleep(PAUSA)
 
-                # 2. Confere os preços.
+                # 2. Confere os preços (das listas pessoais e dos desejos do grupo).
                 avisos: list[tuple[int, str]] = []
                 for appid, nome in self.db.appids_das_listas().items():
+                    if not nome:  # jogo da lista de desejos da Steam que o bot ainda não sabe o nome
+                        detalhes = await self.steam.detalhes(appid)
+                        await asyncio.sleep(PAUSA)
+                        if not detalhes or not detalhes.get("name"):
+                            continue
+                        nome = detalhes["name"]
+                        self.db.catalogo_adicionar([(appid, nome)])
                     preco = await self.steam.preco(appid)
                     await asyncio.sleep(PAUSA)
                     desconto = int((preco or {}).get("discount_percent") or 0)
@@ -89,7 +100,7 @@ class PromocoesCog(commands.Cog):
         for appid, tipo in avisos:
             await self.anunciar(appid, tipo)
 
-    def embed_promocao(self, promo, tipo: str) -> discord.Embed:
+    def embed_promocao(self, promo, tipo: str, querem: int = 1) -> discord.Embed:
         titulo = "ficou ainda mais barato" if tipo == "maior" else "está em promoção"
         preco = f"**{promo['preco_texto']}** (−{promo['desconto']}%)"
         if promo["original_texto"]:
@@ -99,6 +110,9 @@ class PromocoesCog(commands.Cog):
             url=f"https://store.steampowered.com/app/{promo['appid']}/",
             description=f"{preco}\n\nBoa hora de garantir antes da próxima maratona! 🎮",
         )
+        if querem >= 2:
+            e.add_field(name="🔥 Desejo do grupo", value=f"{querem} pessoas daqui querem esse jogo "
+                                                          "(na /lista ou na lista de desejos da Steam).")
         return e
 
     @staticmethod
@@ -106,7 +120,7 @@ class PromocoesCog(commands.Cog):
         mencoes = " ".join(f"<@{p}>" for p in pessoas)
         if len(pessoas) == 1:
             return f"{mencoes}, um jogo da sua lista entrou em promoção! 💸"
-        return f"{mencoes}, um jogo da lista de vocês entrou em promoção! 💸"
+        return f"{mencoes}, um jogo que vocês querem entrou em promoção! 💸"
 
     async def anunciar(self, appid: int, tipo: str) -> None:
         promo = self.db.promocao(appid)
@@ -122,7 +136,7 @@ class PromocoesCog(commands.Cog):
             try:
                 # Notifica só as pessoas que têm o jogo na lista (nunca @everyone nem cargos).
                 await canal.send(
-                    self.texto_marcando(pessoas), embed=self.embed_promocao(promo, tipo), view=view,
+                    self.texto_marcando(pessoas), embed=self.embed_promocao(promo, tipo, len(pessoas)), view=view,
                     allowed_mentions=discord.AllowedMentions(
                         everyone=False, roles=False, users=[discord.Object(id=p) for p in pessoas]),
                 )

@@ -1362,6 +1362,15 @@ class MaratonaCog(commands.Cog):
                 for i in self.db.lista(interaction.user.id)
                 if atual.casefold().strip() in i.nome.casefold()][:25]
 
+    @lista.command(name="grupo", description="Lista de desejos do grupo: os jogos que mais gente daqui quer.")
+    async def cmd_lista_grupo(self, interaction: discord.Interaction) -> None:
+        if interaction.guild_id is None:
+            raise ErroMaratona("Esse comando só funciona dentro de um servidor.")
+        steam = self.bot.get_cog("SteamCog")
+        if steam is None:
+            raise ErroMaratona("A parte da Steam do bot não está ligada.")
+        await steam.mostrar_desejos(interaction)
+
     @lista.command(name="ver", description="Mostra (só para você) os jogos da sua lista.")
     async def cmd_lista_ver(self, interaction: discord.Interaction) -> None:
         view = MinhaListaView(self, interaction.user.id)

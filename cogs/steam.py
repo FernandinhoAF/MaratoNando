@@ -22,6 +22,7 @@ from discord.ext import commands
 
 from biblioteca import (AppSteam, Opcao, app_da_linha, app_de_detalhes, calcular_opcoes,
                         escolher_candidatos, ler_perfil, reais)
+from desejos import agrupar
 from jogadores import extrair_de_detalhes
 from nomes import ranquear_parecidos, termos_de_busca
 from radar import normalizar
@@ -35,6 +36,7 @@ log = logging.getLogger("maratonando.steam")
 
 COR_STEAM = COR_DETALHE  # ciano (Manual da Marca)
 BIBLIOTECA_VALIDA_HORAS = 6   # depois disso, lê a biblioteca de novo (alguém pode ter comprado jogo)
+MOSTRAR_DESEJOS = 12        # jogos no /lista grupo
 LOJA_VALIDA_DIAS = 3          # preço/promoção mudam: confere de novo a cada 3 dias
 ANALISAR_POR_VEZ = 60         # jogos novos consultados na loja por /maratona baratos
 POR_PAGINA = 10
@@ -177,6 +179,10 @@ class SteamCog(commands.Cog):
             return None
         self.db.salvar_biblioteca(user_id, True, [int(j["appid"]) for j in jogos])
         self.db.catalogo_adicionar([(int(j["appid"]), j["name"]) for j in jogos if j.get("name")])
+        try:  # a lista de desejos da Steam vem junto (se for privada, fica vazia e tudo bem)
+            self.db.salvar_desejos(user_id, await self.exigir_api().desejos(steamid))
+        except Exception as exc:
+            log.info("Não consegui ler a lista de desejos de %s: %s", user_id, exc)
         return len(jogos)
 
     async def atualizar_bibliotecas(self, user_ids: list[int]) -> None:
@@ -327,6 +333,53 @@ class SteamCog(commands.Cog):
         except Exception as exc:
             log.warning("Não consegui calcular os mais baratos: %s", exc)
             return []
+
+    # ---- /lista grupo ------------------------------------------------
+
+    async def mostrar_desejos(self, interaction: discord.Interaction) -> None:
+        guild_id = interaction.guild_id
+        await interaction.response.defer(thinking=True)
+        ids = self.db.usuarios_com_steam(guild_id)
+        if ids and self.api is not None:
+            try:
+                await self.atualizar_bibliotecas(ids)  # lê também as listas de desejos da Steam
+            except Exception as exc:
+                log.info("Não consegui atualizar as bibliotecas: %s", exc)
+        bibliotecas = self.db.bibliotecas(ids)
+        linhas = self.db.desejos_do_servidor(guild_id)
+        if not linhas:
+            raise ErroMaratona("Ninguém tem jogos na lista ainda. Use `/lista adicionar` (ou vincule a Steam com "
+                               "`/steam vincular`, que o bot lê a sua lista de desejos de lá).")
+        primeiros = [d.appid for d in agrupar(linhas, bibliotecas)][:MOSTRAR_DESEJOS * 2]
+        try:
+            await self.analisar_na_loja(primeiros, MOSTRAR_DESEJOS * 2)  # nome, preço e desconto atuais
+        except (ErroSteam, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            log.info("Loja indisponível para os desejos: %s", exc)
+        apps = {a: app_da_linha(r) for a, r in self.db.apps(primeiros).items()}
+        desejos = agrupar(linhas, bibliotecas, {a: app.desconto for a, app in apps.items()})[:MOSTRAR_DESEJOS]
+
+        itens = []
+        for n, d in enumerate(desejos, start=1):
+            app = apps.get(d.appid)
+            nome = app.nome if app else (self.db.nome_conhecido(d.appid) or f"Jogo {d.appid}")
+            fogo = "🔥 " if d.do_grupo else ""
+            quem = " ".join(f"<@{u}>" for u in d.querem)
+            if app is None:
+                preco = "preço desconhecido"
+            elif app.gratis:
+                preco = "🆓 grátis"
+            elif app.preco_centavos is None:
+                preco = "sem preço no Brasil"
+            else:
+                preco = f"💸 {app.preco_texto} (−{app.desconto}%)" if app.desconto else app.preco_texto
+            tem = f" · ✅ {len(d.ja_tem)} já {'tem' if len(d.ja_tem) == 1 else 'têm'}" if d.ja_tem else ""
+            itens.append(f"{fogo}**{n}. [{nome}](https://store.steampowered.com/app/{d.appid}/)** — "
+                         f"❤️ {len(d.querem)}: {quem}\n{preco}{tem}")
+        e = discord.Embed(title="🎁 Lista de desejos do grupo", color=COR_DETALHE,
+                          description=juntar(itens, limite=4000))
+        e.set_footer(text="Junta a /lista de cada um e a lista de desejos da Steam de quem vinculou a conta. "
+                          "🔥 = 2 ou mais pessoas querem: o bot avisa quando entrar em promoção.")
+        await interaction.followup.send(embed=e, allowed_mentions=SEM_PING)
 
     # ---- /maratona baratos -----------------------------------------
 

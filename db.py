@@ -206,6 +206,13 @@ CREATE TABLE IF NOT EXISTS steam_biblioteca (
     PRIMARY KEY (user_id, appid)
 );
 
+-- Lista de desejos da Steam de quem vinculou a conta (lida junto com a biblioteca).
+CREATE TABLE IF NOT EXISTS steam_desejos (
+    user_id INTEGER NOT NULL,
+    appid   INTEGER NOT NULL,
+    PRIMARY KEY (user_id, appid)
+);
+
 -- O que a loja diz de cada jogo (multiplayer? preço?), guardado para não perguntar toda hora.
 CREATE TABLE IF NOT EXISTS steam_apps (
     appid          INTEGER PRIMARY KEY,
@@ -1273,12 +1280,65 @@ class Database:
         return [r[0] for r in rows]
 
     def appids_das_listas(self) -> dict[int, str]:
-        """{appid: nome} de todos os jogos que estão em alguma lista."""
+        """{appid: nome} dos jogos que o bot vigia as promoções: os das listas pessoais e os "desejos do
+        grupo" (jogos da lista de desejos da Steam que 2 ou mais pessoas de um mesmo servidor querem).
+
+        Desejo do grupo sem nome conhecido ainda vem com nome "" (o aviso de promoção descobre o nome).
+        """
         rows = self.conn.execute(
             "SELECT DISTINCT s.appid, s.nome FROM lista_pessoal l JOIN steam_nomes s ON s.chave = l.chave"
             " WHERE s.appid IS NOT NULL"
         ).fetchall()
-        return {r[0]: r[1] for r in rows}
+        saida = {r[0]: r[1] for r in rows}
+        for appid in self.desejos_do_grupo_em_algum_servidor():
+            saida.setdefault(appid, self.nome_conhecido(appid) or "")
+        return saida
+
+    # ---- lista de desejos do grupo ----------------------------------
+
+    def salvar_desejos(self, user_id: int, appids: list[int]) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM steam_desejos WHERE user_id = ?", (user_id,))
+            self.conn.executemany("INSERT OR IGNORE INTO steam_desejos (user_id, appid) VALUES (?, ?)",
+                                  [(user_id, a) for a in appids])
+
+    def desejos_do_servidor(self, guild_id: int) -> list[tuple[int, int, str]]:
+        """Quem deste servidor quer qual jogo: [(user_id, appid, "lista" ou "steam")].
+
+        "lista" = está na lista pessoal do bot (/lista); "steam" = está na lista de desejos da Steam.
+        """
+        rows = self.conn.execute(
+            "SELECT l.user_id, s.appid, 'lista' FROM lista_pessoal l JOIN steam_nomes s ON s.chave = l.chave"
+            " JOIN usuarios_servidores u ON u.user_id = l.user_id AND u.guild_id = ? WHERE s.appid IS NOT NULL"
+            " UNION SELECT d.user_id, d.appid, 'steam' FROM steam_desejos d"
+            " JOIN usuarios_servidores u ON u.user_id = d.user_id AND u.guild_id = ?",
+            (guild_id, guild_id),
+        ).fetchall()
+        return [(r[0], r[1], r[2]) for r in rows]
+
+    def desejos_do_grupo_em_algum_servidor(self, minimo: int = 2) -> set[int]:
+        """Jogos da lista de desejos da Steam que pelo menos `minimo` pessoas de um mesmo servidor querem
+        (contando também quem tem o jogo na lista pessoal do bot)."""
+        rows = self.conn.execute(
+            "SELECT appid FROM ("
+            "  SELECT u.guild_id, x.appid, COUNT(DISTINCT x.user_id) AS n FROM ("
+            "    SELECT user_id, appid FROM steam_desejos"
+            "    UNION SELECT l.user_id, s.appid FROM lista_pessoal l JOIN steam_nomes s ON s.chave = l.chave"
+            "    WHERE s.appid IS NOT NULL) x"
+            "  JOIN usuarios_servidores u ON u.user_id = x.user_id GROUP BY u.guild_id, x.appid)"
+            " WHERE n >= ? AND appid IN (SELECT appid FROM steam_desejos)",
+            (minimo,),
+        ).fetchall()
+        return {r[0] for r in rows}
+
+    def nome_conhecido(self, appid: int) -> str | None:
+        """Nome do jogo pelo que o bot já viu (loja, catálogo ou listas)."""
+        for sql in ("SELECT nome FROM steam_apps WHERE appid = ?", "SELECT nome FROM catalogo WHERE appid = ?",
+                    "SELECT nome FROM steam_nomes WHERE appid = ?"):
+            row = self.conn.execute(sql, (appid,)).fetchone()
+            if row and row[0]:
+                return row[0]
+        return None
 
     def atualizar_promocao(self, appid: int, nome: str, desconto: int,
                            preco_texto: str | None, original_texto: str | None) -> str | None:
@@ -1315,15 +1375,13 @@ class Database:
         return {r[0]: r[1] for r in rows}
 
     def interessados(self, guild_id: int, appid: int) -> list[int]:
-        """Quem usa o bot neste servidor e tem esse jogo na lista."""
-        rows = self.conn.execute(
-            "SELECT DISTINCT l.user_id FROM lista_pessoal l"
-            " JOIN steam_nomes s ON s.chave = l.chave AND s.appid = ?"
-            " JOIN usuarios_servidores u ON u.user_id = l.user_id AND u.guild_id = ?"
-            " ORDER BY l.user_id",
-            (appid, guild_id),
-        ).fetchall()
-        return [r[0] for r in rows]
+        """Quem usa o bot neste servidor e quer esse jogo: quem tem na lista pessoal e, se for desejo do
+        grupo (2 ou mais pessoas querem), também quem tem na lista de desejos da Steam."""
+        quem = [(u, origem) for u, a, origem in self.desejos_do_servidor(guild_id) if a == appid]
+        pessoas = sorted({u for u, _ in quem})
+        if len(pessoas) >= 2:
+            return pessoas
+        return sorted({u for u, origem in quem if origem == "lista"})
 
     def promocoes_da_lista(self, user_id: int) -> dict[str, sqlite3.Row]:
         """{chave do jogo: promoção} dos jogos da lista da pessoa que estão em promoção agora."""

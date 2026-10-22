@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import discord
@@ -12,7 +12,8 @@ from discord.ext import commands
 
 import cartoes
 from biblioteca import resumo_grupo, rodape_card
-from marca import ASSINATURA, COR_FIM, COR_PAINEL, COR_ROLETA, COR_VERGONHA, url_nando
+import estatisticas
+from marca import ASSINATURA, COR_DETALHE, COR_FIM, COR_PAINEL, COR_ROLETA, COR_VERGONHA, url_nando
 from nomes import ler_escolha, mesmo_jogo, valor_escolha
 from notas import MINIMO_NOTAS_RANKING, estrelas, numero, resumo_nota
 from notas import ranking as ranking_notas
@@ -910,7 +911,8 @@ class MaratonaCog(commands.Cog):
             "Chegou no meio? Clique em **🙋 Tô jogando** no painel.\n"
             "Não querem gastar? `/maratona baratos` mostra o que sai mais barato para o grupo.\n"
             "Jogo em equipe? `/times` sorteia os times.\n"
-            "Sem ideia de jogo? `/sugestao` e `/radar ver` dão sugestões.\n\n"
+            "Sem ideia de jogo? `/sugestao` e `/radar ver` dão sugestões.\n"
+            "Curioso com os números do grupo? `/stats` mostra as estatísticas de todas as maratonas.\n\n"
             "Perdeu o painel no meio do chat? `/maratona painel` traz ele de volta.\n"
             "Quer tirar um jogo seu antes de ser sorteado? **📋 Meus jogos**."
         ))
@@ -1144,6 +1146,47 @@ class MaratonaCog(commands.Cog):
         e.set_thumbnail(url=url_nando(self.bot))
         e.set_footer(text=f"Média das notas de todas as maratonas · só entram jogos com "
                           f"{MINIMO_NOTAS_RANKING} notas ou mais")
+        await interaction.response.send_message(embed=e, allowed_mentions=SEM_PING)
+
+    # ---- estatísticas do grupo --------------------------------------
+
+    @app_commands.command(name="stats", description="Estatísticas do grupo: maratonas, horas, jogos e quem mais coloca jogo.")
+    @app_commands.guild_only()
+    async def cmd_stats(self, interaction: discord.Interaction) -> None:
+        maratonas = self.db.stats_maratonas(interaction.guild_id)
+        if not maratonas:
+            raise ErroMaratona("Este servidor ainda não teve nenhuma maratona. Que tal abrir a primeira com "
+                               "`/maratona criar`? 🎮")
+        jogos = self.db.stats_jogos(interaction.guild_id)
+        r = estatisticas.resumo(maratonas, jogos)
+
+        e = discord.Embed(
+            title="📊 Estatísticas do grupo", color=COR_DETALHE,
+            description=(f"**{plural(r.maratonas, 'maratona', 'maratonas')}** · "
+                         f"**{plural(r.jogos_jogados, 'jogo jogado', 'jogos jogados')}** · "
+                         f"**{estatisticas.horas_texto(r.horas)}** de jogatina\n"
+                         f"Desde {carimbo(r.desde, 'D')}"),
+        )
+        e.add_field(name="🎰 Mais sorteados",
+                    value=juntar([f"**{nome}** — {vezes}x" for nome, vezes in estatisticas.mais_sorteados(jogos)],
+                                 vazio="Nenhum jogo sorteado ainda."))
+        e.add_field(name="🙋 Quem mais coloca jogo",
+                    value=juntar([f"<@{p.user_id}> — {plural(p.colocou, 'jogo', 'jogos')} "
+                                  f"({p.sairam} {'saiu' if p.sairam == 1 else 'saíram'})"
+                                  for p in estatisticas.por_pessoa(jogos)]))
+        favoritos = ranking_notas(self.db.notas_do_servidor(interaction.guild_id))
+        if favoritos:
+            f = favoritos[0]
+            e.add_field(name="⭐ Favorito do grupo",
+                        value=f"**{f.nome}** — {estrelas(f.media)} {numero(f.media)}\nVeja o resto no `/ranking`",
+                        inline=False)
+        e.add_field(name="😤 Mural da Vergonha (todos os tempos)",
+                    value=juntar(ranking(self.db.stats_mural(interaction.guild_id)[:3]),
+                                 vazio="Ninguém nunca reclamou. Grupo exemplar! 😇"), inline=False)
+        meses = estatisticas.por_mes([c for c, _ in maratonas], datetime.now(timezone.utc))
+        e.add_field(name="📅 Maratonas por mês", value=f"```\n{estatisticas.barras(meses)}\n```", inline=False)
+        e.set_thumbnail(url=url_nando(self.bot))
+        e.set_footer(text="As horas vão da abertura ao encerramento de cada maratona (no máximo 12h por noite).")
         await interaction.response.send_message(embed=e, allowed_mentions=SEM_PING)
 
     # ---- /lista ----------------------------------------------------

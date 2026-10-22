@@ -790,6 +790,33 @@ class Database:
         ).fetchall()
         return [(r[0], r[1], r[2], r[3]) for r in rows]
 
+    # ---- estatísticas do grupo --------------------------------------
+
+    def stats_maratonas(self, guild_id: int) -> list[tuple[str, str | None]]:
+        """Todas as maratonas do servidor: [(criada_em, encerrada_em ou None)], da mais antiga à mais nova."""
+        rows = self.conn.execute(
+            "SELECT criada_em, encerrada_em FROM maratonas WHERE guild_id = ? ORDER BY id", (guild_id,)
+        ).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+    def stats_jogos(self, guild_id: int) -> list[tuple[int, str, int | None, int | None]]:
+        """Todos os jogos já colocados na roleta no servidor: [(user_id, nome, appid, ordem ou None)]."""
+        rows = self.conn.execute(
+            "SELECT j.user_id, j.nome, j.appid, j.ordem FROM jogos j"
+            " JOIN maratonas m ON m.id = j.maratona_id WHERE m.guild_id = ? ORDER BY j.id",
+            (guild_id,),
+        ).fetchall()
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+    def stats_mural(self, guild_id: int) -> list[tuple[int, int]]:
+        """Mural da Vergonha de todos os tempos: [(user_id, reclamações)], do maior para o menor."""
+        rows = self.conn.execute(
+            "SELECT r.user_id, COUNT(*) AS n FROM reclamacoes r JOIN maratonas m ON m.id = r.maratona_id"
+            " WHERE m.guild_id = ? GROUP BY r.user_id ORDER BY n DESC, MIN(r.id)",
+            (guild_id,),
+        ).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
     # ---- radar de jogos --------------------------------------------
 
     def radar_adicionar_streamer(self, guild_id: int, login: str, twitch_id: str, nome: str) -> bool:

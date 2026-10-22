@@ -6,3 +6,6 @@ __pycache__/
 .venv/
 venv/
 *.zip
+
+# Material do designer (manual da marca): fica só no PC
+visual/

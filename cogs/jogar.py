@@ -387,7 +387,8 @@ class JogarCog(commands.Cog):
         if detalhes.get("header_image"):
             e.set_image(url=detalhes["header_image"])
         e.add_field(name="💰 Preço", value=ficha.preco_texto(detalhes))
-        e.add_field(name="👍 Avaliações", value=ficha.avaliacao_texto(avaliacoes))
+        e.add_field(name="👍 Avaliações", value=ficha.avaliacao_texto(avaliacoes) if avaliacoes is not None
+                    else "A Steam não mandou agora")
         faixa = faixa_da_linha(self.db.jogadores_de([appid]).get(appid))
         e.add_field(name="👥 Jogadores", value=faixa_texto(faixa) if faixa
                     else "A Steam não diz (ensine pelo botão 👥 aqui embaixo)")

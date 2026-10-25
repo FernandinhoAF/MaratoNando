@@ -8,6 +8,7 @@ para ajustar.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import aiohttp
 
@@ -18,6 +19,8 @@ URL_BUSCA = "https://store.steampowered.com/api/storesearch/"
 URL_DETALHES = "https://store.steampowered.com/api/appdetails"
 URL_AVALIACOES = "https://store.steampowered.com/appreviews/{appid}"
 URL_LOJA = "https://store.steampowered.com/search/results/"
+
+log = logging.getLogger("maratonando.steam")
 
 PAUSA = 1.0  # segundos entre chamadas, para não ser bloqueado pela Steam
 
@@ -35,7 +38,13 @@ class SteamClient:
         async with self.session.get(url, params=params, headers={"User-Agent": "MaratoNando (bot de Discord)"}) as r:
             if r.status != 200:
                 raise ErroSteam(f"Steam respondeu HTTP {r.status}")
-            return await r.json(content_type=None)
+            try:
+                dados = await r.json(content_type=None)
+            except ValueError:  # resposta vazia ou página de erro no lugar do JSON
+                raise ErroSteam("a Steam mandou uma resposta vazia") from None
+            if not isinstance(dados, dict):
+                raise ErroSteam("a Steam mandou uma resposta vazia")
+            return dados
 
     async def buscar(self, nome: str) -> list[dict]:
         dados = await self._json(URL_BUSCA, {"term": nome, "l": "english", "cc": self.pais})
@@ -47,10 +56,21 @@ class SteamClient:
         bloco = dados.get(str(appid)) or {}
         return bloco.get("data") if bloco.get("success") else None
 
-    async def avaliacoes(self, appid: int) -> dict:
-        dados = await self._json(URL_AVALIACOES.format(appid=appid),
-                                 {"json": "1", "language": "all", "purchase_type": "all", "num_per_page": "0"})
-        return dados.get("query_summary", {})
+    async def avaliacoes(self, appid: int) -> dict | None:
+        """Resumo das avaliações do jogo, ou None se a Steam não mandou agora.
+
+        Esse endereço às vezes volta vazio (a Steam limita quem pede demais). Avaliação é um
+        extra: sem ela, a ficha e o radar continuam funcionando com o resto.
+        """
+        try:
+            dados = await self._json(URL_AVALIACOES.format(appid=appid),
+                                     {"json": "1", "language": "all", "purchase_type": "all",
+                                      "num_per_page": "1", "filter": "all"})
+        except (ErroSteam, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            log.info("Avaliações de %s indisponíveis: %s", appid, exc)
+            return None
+        resumo = dados.get("query_summary")
+        return resumo if isinstance(resumo, dict) else None
 
     async def info(self, game_id: str, nome_twitch: str, agora_iso: str) -> InfoJogo:
         """Procura o jogo da Twitch na Steam e junta preço, categorias e avaliações."""

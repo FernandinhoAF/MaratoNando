@@ -6,6 +6,7 @@ import random
 from datetime import datetime, timezone
 from typing import Optional
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -19,6 +20,7 @@ from nomes import ler_escolha, valor_escolha
 from notas import MINIMO_NOTAS_RANKING, estrelas, numero, resumo_nota
 from notas import ranking as ranking_notas
 from db import Database, ErroMaratona, ItemLista, Jogo, Maratona, limpar_nome, separar_nomes
+from servicos.steam import ErroSteam
 
 log = logging.getLogger("maratonando")
 
@@ -161,6 +163,9 @@ async def tratar_erro(interaction: discord.Interaction, erro: Exception) -> None
     original = getattr(erro, "original", erro)
     if isinstance(original, ErroMaratona):
         texto = str(original)
+    elif isinstance(original, (ErroSteam, aiohttp.ClientError, asyncio.TimeoutError)):
+        log.warning("Steam/internet falhou: %r", original)
+        texto = "A Steam não respondeu agora 😵 Tenta de novo daqui a pouco."
     else:
         log.exception("Erro inesperado", exc_info=original)
         texto = "Deu ruim aqui 😵 Tenta de novo daqui a pouco."

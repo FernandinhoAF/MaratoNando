@@ -23,7 +23,7 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 - **🧹 Chat limpo**: com `/config canal-do-bot`, o bot ganha um canal próprio onde as mensagens ficam. Em qualquer outro canal, só as mensagens **do durante a maratona** somem sozinhas depois de alguns minutos (padrão: 10): a roleta e a revelação, os pedidos de nota, o `/reclamou`, os avisos de quem entrou/saiu e do modo da roleta, o painel (só depois que a maratona acaba) e o convite de maratona agendada (só depois que ela começa). O **resumo final** fica, e o resto do bot também (`/perfil`, `/jogo`, `/stats`, `/o-que-jogar`, `/bora`…). Se alguém estiver usando os botões de uma mensagem, o prazo recomeça.
 - **🎁 Jogos grátis** (botão 🎁 Grátis do `/o-que-jogar`): o grátis da semana da **Epic Games** (e os próximos) e os jogos **100% off da Steam** (de graça para sempre, não os free-to-play de sempre), com imagem, até quando vale e quanto custaria. A cada 3 horas o bot confere e, quando aparece jogo grátis novo, avisa no canal do bot, sem marcar ninguém e sem repetir. Liga/desliga com `/config gratis`.
 - **🎁 Lista de desejos do grupo** (botão 🎁 Lista do grupo do `/lista`): junta a `/lista` de cada um com a **lista de desejos da Steam** de quem vinculou a conta (o bot lê junto com a biblioteca) e mostra os jogos que mais gente do servidor quer, com preço, desconto e quantos já têm. Quem já comprou sai da conta. 🔥 = **desejo do grupo** (2 ou mais pessoas querem).
-- **💸 Avisos de promoção**: a cada 6 horas o bot confere na Steam o preço dos jogos que estão nas listas pessoais. Quando um deles entra em promoção (ou o desconto aumenta), ele avisa no canal do bot marcando (com notificação) só quem tem aquele jogo na lista. O `/lista` também mostra quais jogos da sua lista estão em promoção. Os **desejos do grupo** também entram: quando um jogo que 2 ou mais pessoas querem (na `/lista` ou na lista de desejos da Steam) entra em promoção, o bot marca todo mundo que quer. Um jogo que só uma pessoa tem na lista de desejos da Steam não é avisado (a própria Steam já manda e-mail).
+- **💸 Promoções na `/lista`**: a cada 6 horas o bot confere, em silêncio, o preço na Steam dos jogos das listas pessoais e dos desejos do grupo. Quem abre a `/lista` vê quais estão em promoção (💸 −38%). O bot não manda mensagem avisando, para não encher o canal.
 - **💰 Mais barato para o grupo** (menu **Mais opções…** do painel): cada pessoa vincula a Steam (ou um admin vincula por ela), e o bot cruza as bibliotecas de quem está jogando a maratona. Mostra os jogos multiplayer do mais barato para o grupo ao mais caro: o custo é o preço atual × quantas pessoas ainda não têm. Primeiro aparecem os que todo mundo já tem e os grátis. O mesmo cálculo aparece **no sorteio** ("✅ 3 têm · 🛒 falta para @Bia, R$ 14,87") e, só para quem está colocando, **ao colocar um jogo na roleta**, para todo mundo pensar no bolso dos amigos.
 - **🎯 Modos da roleta** (menu **Mais opções…** do painel → 🎯 Modo da roleta): quem organizou escolhe quais jogos podem sair no sorteio. **✅ Ninguém precisa comprar**: só saem jogos que todo mundo (com Steam vinculada) já tem, ou que são grátis. **💸 Só até R$ X**: só saem jogos que custam até esse valor para quem ainda não tem. **🎲 Livre**: qualquer jogo (o normal). Com um modo ligado, a roleta aparece na hora e o bot confere na Steam, enquanto ela gira, quais jogos valem; os que não valem continuam na roleta e voltam a valer se o modo mudar. Jogos que não dá para conferir na Steam (de fora da Steam, sem preço no Brasil) ficam de fora, para ninguém ser pego de surpresa pagando. O painel e a revelação mostram o modo e quantos jogos ficaram de fora.
 - **🙋 Chegou no meio?** O botão **Tô jogando** do painel coloca a pessoa na maratona mesmo sem jogo na roleta, e ela passa a contar nos times e nos mais baratos para o grupo.
@@ -60,7 +60,6 @@ São só **10 comandos** na lista do `/`: cada um abre um painel com botões e m
 |---|---|
 | `/config canal-do-bot [canal]` | Define o canal do bot; fora dele, as mensagens do bot somem sozinhas (vazio = desliga) |
 | `/config apagar-depois minutos` | Quanto tempo as mensagens da maratona ficam fora do canal do bot (0 = nunca apagar) |
-| `/config promocoes ativo` | Liga/desliga os avisos de promoção (vão para o canal do bot) |
 | `/config gratis ativo` | Liga/desliga o aviso de jogos grátis (vai para o canal do bot) |
 | `/config cargo-jogos [cargo]` | Cargo marcado ao abrir maratona e no `/bora` (vazio = ninguém) |
 | `/config steam pessoa [perfil]` | Vincula a Steam de outra pessoa (sem `perfil`, desvincula) |
@@ -142,7 +141,7 @@ O visual segue o Manual da Marca v1: o mascote **Nando**, as fontes **Silkscreen
 |---|---|---|
 | Magenta | `#FF4FA3` | painel da maratona, lista pessoal, /bora, perfil |
 | Amarelo | `#FFD23F` | roleta e revelação do jogo |
-| Verde | `#45E39A` | resumo final e promoções |
+| Verde | `#45E39A` | resumo final e jogos grátis |
 | Vermelho | `#FF5A4E` | Mural da Vergonha |
 | Ciano | `#3FD8FF` | radar, sugestões, times, Steam e configurações |
 
@@ -211,7 +210,7 @@ MaratoNando/
 │   ├── radar.py       # /radar (admins), sugestões da loja e a coleta automática a cada 10 minutos
 │   ├── times.py       # /times
 │   ├── limpeza.py     # /config e a faxina das mensagens fora do canal do bot
-│   ├── promocoes.py   # vigia de promoções dos jogos das listas
+│   ├── promocoes.py   # confere em silêncio quais jogos das listas estão em promoção (aparece na /lista)
 │   ├── steam.py       # contas e bibliotecas da Steam, mais baratos e lista do grupo
 │   ├── chamar.py      # /bora
 │   ├── gratis.py      # jogos grátis (botão do /o-que-jogar) e o aviso automático
@@ -228,7 +227,7 @@ MaratoNando/
 │   ├── test_sugestao.py # testes do filtro das sugestões da loja
 │   ├── test_times.py  # testes do sorteio de times
 │   ├── test_limpeza.py # testes da agenda de limpeza
-│   ├── test_promocoes.py # testes dos avisos de promoção
+│   ├── test_promocoes.py # testes das promoções guardadas
 │   ├── test_biblioteca.py # testes do custo para o grupo e das contas Steam
 │   ├── test_chamar.py # testes do cargo de jogos e do /bora
 │   ├── test_nomes.py  # testes de nomes digitados com erro e repetidos

@@ -128,9 +128,6 @@ class LimpezaCog(commands.Cog):
                     value="Nunca" if minutos == 0 else f"{minutos} min")
         cargo = self.db.cargo_jogos(guild_id)
         e.add_field(name="Cargo de jogos", value=f"<@&{cargo}>" if cargo else "Nenhum")
-        e.add_field(name="Avisos de promoção", value=(
-            "Ligados" if self.db.avisar_promocoes(guild_id) and canal_bot
-            else "Ligados, mas precisam do canal do bot" if self.db.avisar_promocoes(guild_id) else "Desligados"))
         e.add_field(name="Avisos de jogos grátis", value=(
             "Ligados" if self.db.avisar_gratis(guild_id) and canal_bot
             else "Ligados, mas precisam do canal do bot" if self.db.avisar_gratis(guild_id) else "Desligados"))
@@ -154,13 +151,6 @@ class LimpezaCog(commands.Cog):
     async def cmd_minutos(self, interaction: discord.Interaction,
                           minutos: app_commands.Range[int, 0, 1440]) -> None:
         self.db.definir_minutos_limpeza(interaction.guild_id, minutos)
-        await interaction.response.send_message(embed=self.embed_config(interaction.guild_id), ephemeral=True)
-
-    @config.command(name="promocoes",
-                    description="Liga/desliga os avisos de promoção dos jogos das listas (vão para o canal do bot).")
-    @app_commands.describe(ativo="Avisar quando um jogo das listas entrar em promoção na Steam?")
-    async def cmd_promocoes(self, interaction: discord.Interaction, ativo: bool) -> None:
-        self.db.definir_avisar_promocoes(interaction.guild_id, ativo)
         await interaction.response.send_message(embed=self.embed_config(interaction.guild_id), ephemeral=True)
 
     @config.command(name="gratis",

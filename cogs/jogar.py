@@ -11,7 +11,7 @@
 Quantas pessoas cada jogo aceita vem da descrição da Steam (jogadores.py). Quando a
 descrição não diz, ou diz errado, qualquer um ensina pelo botão 👥 da ficha do /jogo.
 
-/jogo: ficha do jogo, com botões de lista, roleta e nº de jogadores.
+/jogo: ficha do jogo, com botões de lista, roleta, "quem topa?" e nº de jogadores.
 /perfil: perfil gamer, com os botões para vincular ou desvincular a Steam.
 """
 
@@ -37,6 +37,7 @@ from nomes import ler_escolha
 from radar import PRECO_MAX_PADRAO
 from servicos.steam import ErroSteam
 from cogs.steam import SteamModal
+from cogs.turmas import QuandoModal
 from sugestao import filtrar
 
 log = logging.getLogger("maratonando.jogar")
@@ -87,8 +88,8 @@ class JogadoresModal(discord.ui.Modal, title="Quantas pessoas jogam?"):
 
 
 class FichaView(discord.ui.View):
-    """Botões da ficha: salvar na lista, colocar na roleta (se tiver maratona aberta), corrigir o
-    número de jogadores e abrir na Steam."""
+    """Botões da ficha: salvar na lista, colocar na roleta (se tiver maratona aberta), perguntar quem
+    topa (turma), corrigir o número de jogadores e abrir na Steam."""
 
     def __init__(self, cog: "JogarCog", appid: int, nome: str, com_roleta: bool) -> None:
         super().__init__(timeout=1800)
@@ -123,6 +124,12 @@ class FichaView(discord.ui.View):
         maratona_cog = self.cog.bot.get_cog("MaratonaCog")
         if adicionados and maratona_cog is not None:
             await maratona_cog.atualizar_painel(m.id)
+
+    @discord.ui.button(label="Quem topa?", emoji="🗳️", style=discord.ButtonStyle.primary)
+    async def topa(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        """Pergunta no canal quem topa jogar esse jogo (monta a turma)."""
+        turmas = self.cog.cog_ou_erro("TurmasCog")
+        await interaction.response.send_modal(QuandoModal(turmas, self.nome, self.appid))
 
     @discord.ui.button(label="Nº de jogadores", emoji="👥", style=discord.ButtonStyle.secondary)
     async def jogadores(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:

@@ -7,6 +7,7 @@
     dentro ("Fechou!") e quem clica depois vai para a fila de espera. Se alguém de dentro sai, o primeiro
     da fila sobe e é avisado.
   • Com "hora" (ex.: 21h), o chamado mostra o horário e, na hora, o bot avisa quem está dentro.
+  • Se o jogo tem turma (quem topou no /topa), o bot marca essa turma também, e ela fecha.
   • Se a Steam estiver ligada, mostra quem dos confirmados tem o jogo e quanto custa para quem não tem.
     Sem jogo escolhido, sugere os jogos mais baratos para quem topou.
 
@@ -214,6 +215,9 @@ class ChamarCog(commands.Cog):
         self.db.definir_mensagem_chamado(chamado_id, msg.id)
         if aviso:
             await interaction.followup.send(f"Chamado feito{aviso}.", ephemeral=True)
+        turmas = self.bot.get_cog("TurmasCog")
+        if jogo and turmas is not None:  # o jogo tem turma (/topa)? marca quem topou e fecha a turma
+            await turmas.chamar_turma(interaction, jogo, appid)
         self.em_segundo_plano(self.calcular_steam(chamado_id))
 
     @cmd_bora.autocomplete("jogo")

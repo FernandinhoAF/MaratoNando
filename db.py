@@ -315,6 +315,33 @@ CREATE TABLE IF NOT EXISTS notas (
     dada_em TEXT    NOT NULL,
     PRIMARY KEY (jogo_id, user_id)
 );
+
+-- ===== Turmas ("Quem topa?") =====
+
+-- Enquete de um jogo: quem topa jogar? Fica aberta até o jogo ser jogado (/bora ou maratona).
+CREATE TABLE IF NOT EXISTS turmas (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id    INTEGER NOT NULL,
+    nome        TEXT    NOT NULL,
+    chave       TEXT    NOT NULL,  -- nome em minúsculas (para achar a turma pelo nome)
+    appid       INTEGER,           -- jogo da Steam, quando o bot reconheceu
+    autor_id    INTEGER NOT NULL,
+    quando      TEXT,              -- texto livre: "sábado à noite"
+    channel_id  INTEGER,
+    message_id  INTEGER,           -- a mensagem mais recente da enquete
+    criada_em   TEXT    NOT NULL,
+    fechada_em  TEXT,              -- NULL = aberta
+    fechada_por TEXT               -- "bora" ou "maratona"
+);
+CREATE INDEX IF NOT EXISTS turmas_abertas ON turmas (guild_id, fechada_em);
+
+CREATE TABLE IF NOT EXISTS turma_respostas (
+    turma_id INTEGER NOT NULL,
+    user_id  INTEGER NOT NULL,
+    resposta TEXT    NOT NULL,     -- topo, talvez ou passo
+    em       TEXT    NOT NULL,
+    PRIMARY KEY (turma_id, user_id)
+);
 """
 
 # Colunas criadas depois da primeira versão: adicionadas sozinhas em bancos antigos.
@@ -1588,6 +1615,87 @@ class Database:
                 (chamado_id, user_id, resposta, agora(), ordem),
             )
         return True
+
+    # ---- turmas ("Quem topa?") ----------------------------------------
+
+    def turma_do_jogo(self, guild_id: int, nome: str, appid: int | None = None) -> sqlite3.Row | None:
+        """A turma aberta desse jogo no servidor (pelo jogo da Steam ou pelo nome), ou None."""
+        return self.conn.execute(
+            "SELECT * FROM turmas WHERE guild_id = ? AND fechada_em IS NULL"
+            " AND ((? IS NOT NULL AND appid = ?) OR chave = ?) ORDER BY id DESC LIMIT 1",
+            (guild_id, appid, appid, _chave(limpar_nome(nome))),
+        ).fetchone()
+
+    def abrir_turma(self, guild_id: int, nome: str, appid: int | None, autor_id: int,
+                    quando: str | None = None) -> tuple[int, bool]:
+        """(id da turma, se é nova). Se o jogo já tem turma aberta, usa a mesma (os votos continuam).
+
+        Quem pergunta já entra como "topo".
+        """
+        nome = limpar_nome(nome)
+        existente = self.turma_do_jogo(guild_id, nome, appid)
+        with self.conn:
+            if existente is not None:
+                turma_id = existente["id"]
+                if quando:
+                    self.conn.execute("UPDATE turmas SET quando = ? WHERE id = ?", (quando, turma_id))
+                if appid and existente["appid"] is None:
+                    self.conn.execute("UPDATE turmas SET appid = ? WHERE id = ?", (appid, turma_id))
+                nova = False
+            else:
+                cur = self.conn.execute(
+                    "INSERT INTO turmas (guild_id, nome, chave, appid, autor_id, quando, criada_em)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (guild_id, nome, _chave(nome), appid, autor_id, quando or None, agora()))
+                turma_id, nova = cur.lastrowid, True
+        if nova or self.resposta_turma(turma_id, autor_id) is None:
+            self.responder_turma(turma_id, autor_id, "topo")
+        return turma_id, nova
+
+    def turma(self, turma_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM turmas WHERE id = ?", (turma_id,)).fetchone()
+
+    def definir_mensagem_turma(self, turma_id: int, channel_id: int, message_id: int) -> None:
+        with self.conn:
+            self.conn.execute("UPDATE turmas SET channel_id = ?, message_id = ? WHERE id = ?",
+                              (channel_id, message_id, turma_id))
+
+    def responder_turma(self, turma_id: int, user_id: int, resposta: str) -> None:
+        if resposta not in ("topo", "talvez", "passo"):
+            raise ValueError(resposta)
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO turma_respostas (turma_id, user_id, resposta, em) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (turma_id, user_id) DO UPDATE SET resposta = excluded.resposta, em = excluded.em",
+                (turma_id, user_id, resposta, agora()))
+
+    def resposta_turma(self, turma_id: int, user_id: int) -> str | None:
+        row = self.conn.execute("SELECT resposta FROM turma_respostas WHERE turma_id = ? AND user_id = ?",
+                                (turma_id, user_id)).fetchone()
+        return row["resposta"] if row else None
+
+    def respostas_turma(self, turma_id: int) -> dict[str, list[int]]:
+        """{'topo': [...], 'talvez': [...], 'passo': [...]} na ordem em que responderam."""
+        saida: dict[str, list[int]] = {"topo": [], "talvez": [], "passo": []}
+        for r in self.conn.execute("SELECT user_id, resposta FROM turma_respostas WHERE turma_id = ?"
+                                   " ORDER BY em, rowid", (turma_id,)):
+            saida[r["resposta"]].append(r["user_id"])
+        return saida
+
+    def fechar_turma(self, turma_id: int, motivo: str) -> bool:
+        """Marca a turma como jogada. True só na primeira vez."""
+        with self.conn:
+            cur = self.conn.execute("UPDATE turmas SET fechada_em = ?, fechada_por = ? WHERE id = ? AND fechada_em IS NULL",
+                                    (agora(), motivo, turma_id))
+        return cur.rowcount == 1
+
+    def turmas_abertas(self, guild_id: int) -> list[tuple[sqlite3.Row, int]]:
+        """(turma, quantos topam) das turmas abertas do servidor, das com mais gente para as com menos."""
+        linhas = self.conn.execute(
+            "SELECT t.*, (SELECT COUNT(*) FROM turma_respostas r WHERE r.turma_id = t.id AND r.resposta = 'topo')"
+            " AS topam FROM turmas t WHERE t.guild_id = ? AND t.fechada_em IS NULL ORDER BY topam DESC, t.id",
+            (guild_id,)).fetchall()
+        return [(l, l["topam"]) for l in linhas]
 
     def respostas_chamado(self, chamado_id: int) -> dict[str, list[int]]:
         """{'bora': [...], 'depois': [...], 'nao': [...]} na ordem em que responderam."""

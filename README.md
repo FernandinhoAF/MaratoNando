@@ -28,6 +28,7 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 - **🎯 Modos da roleta** (menu **Mais opções…** do painel → 🎯 Modo da roleta): quem organizou escolhe quais jogos podem sair no sorteio. **✅ Ninguém precisa comprar**: só saem jogos que todo mundo (com Steam vinculada) já tem, ou que são grátis. **💸 Só até R$ X**: só saem jogos que custam até esse valor para quem ainda não tem. **🎲 Livre**: qualquer jogo (o normal). Com um modo ligado, a roleta aparece na hora e o bot confere na Steam, enquanto ela gira, quais jogos valem; os que não valem continuam na roleta e voltam a valer se o modo mudar. Jogos que não dá para conferir na Steam (de fora da Steam, sem preço no Brasil) ficam de fora, para ninguém ser pego de surpresa pagando. O painel e a revelação mostram o modo e quantos jogos ficaram de fora.
 - **🙋 Chegou no meio?** O botão **Tô jogando** do painel coloca a pessoa na maratona mesmo sem jogo na roleta, e ela passa a contar nos times e nos mais baratos para o grupo.
 - **📣 Chamar o pessoal**: com o cargo de jogos configurado (`/config cargo-jogos`), o bot marca o cargo quando alguém abre uma maratona. E o `/bora` posta um chamado marcando o cargo: cada um responde com um clique (✋ Bora · ⏰ Daqui a pouco · ❌ Hoje não). Com `pessoas`, são **vagas**: os primeiros que clicam Bora estão dentro e, quando lota, o bot marca só eles ("Fechou o grupo!"); quem clica depois vai para a **fila de espera** e, se alguém de dentro sair, o primeiro da fila sobe e é avisado. Com `hora` (ex.: `21h`), o chamado mostra o horário (se já passou hoje, vale amanhã) e, na hora, o bot marca quem está dentro: "Hora de jogar!". Com `marcar_cargo: Não`, chama sem marcar o cargo. Com a Steam ligada, mostra quem dos confirmados tem o jogo (ou, sem jogo escolhido, os mais baratos para eles). O cargo é marcado no máximo uma vez a cada 30 minutos.
+- **🗳️ Quem topa? (turma do jogo)**: lançou um jogo no meio da semana? O `/topa jogo:…` (ou o botão **🗳️ Quem topa?** da ficha do `/jogo`) posta uma enquete: cada um responde 🙋 Topo · 🤔 Talvez · 🙅 Passo, e dá para mudar de ideia. Quem topa entra na **turma** do jogo. Com a Steam ligada, a enquete mostra quem da turma já tem o jogo e quanto falta comprar. A turma é chamada de três jeitos: num `/bora` desse jogo, o bot marca quem topou (nunca quem disse talvez ou passo); pelo botão **📣 Chamar a turma** da enquete, que abre um `/bora` do jogo; e, na maratona, o painel mostra os **🔥 Jogos com turma** e o menu **Mais opções…** coloca um deles na roleta. Depois que o jogo é jogado (no `/bora` ou saindo na roleta), a turma fecha. Não tem prazo: até jogar, ela continua aberta. Perguntar de novo de um jogo que já tem turma reaproveita os votos.
 - **✍️ Nomes digitados de qualquer jeito**: o `/maratona jogo:…`, o `/lista jogo:…`, o `/jogo` e o `/bora` sugerem jogos da Steam enquanto você digita. No formulário de "Adicionar jogos", nomes que não batem com nenhum jogo viram um "você quis dizer…?" (ex.: "letal compani" → **Lethal Company**), e quem quiser pode manter como escreveu (jogos de fora da Steam). Jogos reconhecidos ficam com o nome oficial, e a roleta barra repetidos escritos de outro jeito ("R.E.P.O." = "repo").
 - **Mural da Vergonha**: `/reclamou @pessoa`, ou botão direito na pessoa → Apps → **Reclamou!**
 - **📅 Maratona agendada** (`/maratona` → **📅 Agendar**): marca a maratona para depois ("sábado" + "21h30", "amanhã", "25/10"…; o dia tem sugestões enquanto digita). O bot posta um convite com **✅ Eu vou · 🤔 Talvez · ❌ Não vou**, coloca no **calendário do servidor** (evento do Discord) e, **15 minutos antes**, abre a maratona sozinho no canal, já com quem confirmou dentro, marcando o cargo de jogos e quem disse "Eu vou". Quem marcou pode cancelar (o evento some do calendário também). Se já tiver uma maratona aberta na hora, o bot só avisa.
@@ -39,14 +40,15 @@ Bot de Discord para **maratonas de jogos com roleta**. Cada pessoa coloca seus j
 
 ## Comandos
 
-São só **10 comandos** na lista do `/`: cada um abre um painel com botões e menus, e o resto é clicando.
+São só **11 comandos** na lista do `/`: cada um abre um painel com botões e menus, e o resto é clicando.
 
 | Comando | O que faz | Botões e menus que ele abre |
 |---|---|---|
-| `/maratona [jogo]` | Sem maratona aberta: mostra **🎮 Abrir agora** (nome e limite de jogos por pessoa) e **📅 Agendar** (dia, hora e nome). Com maratona aberta: traz o painel para o fim do chat. Com `jogo`: coloca esse jogo na roleta (sugestões da Steam enquanto digita) | Painel: ➕ Adicionar jogos · 📋 Meus jogos · 🎲 Sortear · 🙋 Tô jogando · 🏁 Encerrar · menu **Mais opções…** (🎯 modo da roleta, 💰 mais baratos para o grupo, 👥 sortear times, 🎮 quem tem a Steam vinculada, com botão para vincular a sua, ➕ incluir alguém, ➖ tirar alguém sem jogo, 📌 trazer o painel para baixo, ❓ como funciona) |
+| `/maratona [jogo]` | Sem maratona aberta: mostra **🎮 Abrir agora** (nome e limite de jogos por pessoa) e **📅 Agendar** (dia, hora e nome). Com maratona aberta: traz o painel para o fim do chat. Com `jogo`: coloca esse jogo na roleta (sugestões da Steam enquanto digita) | Painel: ➕ Adicionar jogos · 📋 Meus jogos · 🎲 Sortear · 🙋 Tô jogando · 🏁 Encerrar · menu **Mais opções…** (🎯 modo da roleta, 💰 mais baratos para o grupo, 👥 sortear times, 🎮 quem tem a Steam vinculada, com botão para vincular a sua, 🔥 jogos com turma, ➕ incluir alguém, ➖ tirar alguém sem jogo, 📌 trazer o painel para baixo, ❓ como funciona) |
 | `/bora [jogo] [pessoas] [hora] [marcar_cargo]` | Chama o pessoal para jogar: vagas com fila de espera, horário opcional com aviso na hora, e marca o cargo de jogos (a não ser que `marcar_cargo` seja Não) | ✋ Bora · ⏰ Daqui a pouco · ❌ Hoje não · 🔒 Encerrar |
+| `/topa jogo [quando]` | Pergunta quem topa jogar um jogo e monta a turma dele. Num `/bora` desse jogo, o bot marca quem topou | 🙋 Topo · 🤔 Talvez · 🙅 Passo · 📣 Chamar a turma |
 | `/o-que-jogar [pessoas] [jogadores] [preco_max]` | Jogos para o número exato de pessoas: o que vocês já têm (mais barato para o grupo primeiro) e novidades da loja. Sem número e sem call, mostra o "cardápio" | 👥 Para quantas pessoas? · 🔥 Em alta · 🆕 Novidades · 💸 Promoções (Steam) · 🎁 Grátis (Epic e Steam) · 📡 Radar dos streamers |
-| `/jogo jogo` | Ficha do jogo: preço, avaliações, nº de jogadores, modos e quem do servidor tem | 📝 Salvar na minha lista · ➕ Colocar na roleta (com maratona aberta) · 👥 Nº de jogadores (ensinar o bot) · 🛒 Ver na Steam |
+| `/jogo jogo` | Ficha do jogo: preço, avaliações, nº de jogadores, modos e quem do servidor tem | 📝 Salvar na minha lista · ➕ Colocar na roleta (com maratona aberta) · 🗳️ Quem topa? · 👥 Nº de jogadores (ensinar o bot) · 🛒 Ver na Steam |
 | `/lista [jogo]` | Sua lista para as próximas maratonas (só você vê). Com `jogo`: guarda esse jogo | Menu para tirar jogos · ➕ Adicionar jogos · 🎁 Lista do grupo · 🔎 Conferir nomes na Steam |
 | `/perfil [pessoa]` | Perfil gamer: horas, mais jogados e gêneros favoritos na Steam, e os números nas maratonas daqui | No seu perfil: 🔗 Vincular Steam (ou 🔄 Trocar conta) · 🗑️ Desvincular. Admins também veem esses botões no perfil dos outros, para vincular por eles |
 | `/stats` | Estatísticas do grupo: maratonas, horas, jogos mais sorteados, quem mais coloca jogo e maratonas por mês | 🏆 Ranking dos jogos (pelas notas) · 😤 Mural da Vergonha (todos os tempos) |
@@ -194,6 +196,7 @@ MaratoNando/
 ├── nomes.py           # nomes parecidos, repetidos e o "você quis dizer…?"
 ├── perfil.py          # contas do /perfil: horas, mais jogados e gêneros favoritos
 ├── vagas.py           # vagas e fila de espera do /bora
+├── turmas.py          # textos do "Quem topa?" (turma de cada jogo)
 ├── desejos.py         # lista de desejos do grupo: quem quer qual jogo
 ├── gratis.py          # jogos grátis: leitura da Epic e dos 100% off da Steam
 ├── ficha.py           # textos da ficha do jogo (/jogo)
@@ -213,6 +216,7 @@ MaratoNando/
 │   ├── promocoes.py   # confere em silêncio quais jogos das listas estão em promoção (aparece na /lista)
 │   ├── steam.py       # contas e bibliotecas da Steam, mais baratos e lista do grupo
 │   ├── chamar.py      # /bora
+│   ├── turmas.py      # /topa: enquete "Quem topa?" e a turma do jogo
 │   ├── gratis.py      # jogos grátis (botão do /o-que-jogar) e o aviso automático
 │   ├── jogar.py       # /o-que-jogar, /jogo e /perfil
 │   └── agenda.py      # maratona agendada: convite, evento do calendário e abertura automática
@@ -232,6 +236,7 @@ MaratoNando/
 │   ├── test_chamar.py # testes do cargo de jogos e do /bora
 │   ├── test_nomes.py  # testes de nomes digitados com erro e repetidos
 │   ├── test_perfil.py # testes do /perfil
+│   ├── test_turmas.py # testes das turmas do /topa
 │   ├── test_desejos.py # testes da lista de desejos do grupo
 │   ├── test_gratis.py # testes dos jogos grátis (com a resposta real da Epic)
 │   ├── test_ficha.py  # testes da ficha do jogo

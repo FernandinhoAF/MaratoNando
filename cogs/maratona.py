@@ -38,6 +38,7 @@ OPCOES_MAIS = [
     ("baratos", "Mais baratos para o grupo", "💰", "Jogos multiplayer do mais barato para o grupo"),
     ("times", "Sortear times", "👥", "Divide quem está jogando em times"),
     ("steam", "Quem tem a Steam vinculada", "🎮", "As contas da Steam de quem está jogando"),
+    ("turmas", "Jogos com turma", "🔥", "Coloca na roleta um jogo que a turma topou (/topa)"),
     ("incluir", "Incluir alguém", "➕", "Coloca na maratona quem chegou sem jogo"),
     ("tirar", "Tirar alguém sem jogo", "➖", "Tira quem tinha entrado sem jogo"),
     ("painel", "Trazer o painel para baixo", "📌", "Posta o painel de novo no fim do chat"),
@@ -764,6 +765,11 @@ class MaratonaCog(commands.Cog):
         mural = self.db.mural(m.id)
         if mural:
             e.add_field(name="😤 Mural da Vergonha", value=juntar(ranking(mural[:3])), inline=False)
+        turmas = self.bot.get_cog("TurmasCog")
+        resumo = turmas.resumo_painel(m.guild_id) if (turmas is not None and m.aberta) else None
+        if resumo:
+            e.add_field(name="🔥 Jogos com turma", inline=False,
+                        value=f"{resumo}\n-# Para colocar na roleta: **Mais opções… → 🔥 Jogos com turma**")
         return e
 
     async def atualizar_painel(self, maratona_id: int) -> None:
@@ -1063,6 +1069,11 @@ class MaratonaCog(commands.Cog):
             if times is None:
                 raise ErroMaratona("A parte de times do bot não está ligada.")
             await times.abrir(interaction)
+        elif opcao == "turmas":
+            turmas = self.bot.get_cog("TurmasCog")
+            if turmas is None:
+                raise ErroMaratona("A parte das turmas do bot não está ligada.")
+            await turmas.mostrar_para_roleta(interaction, m)
         elif opcao == "steam":
             steam = self.bot.get_cog("SteamCog")
             if steam is None:
@@ -1158,8 +1169,8 @@ class MaratonaCog(commands.Cog):
             "**5.** Depois de cada jogo, o bot pede uma nota de 1 a 5 ⭐.\n"
             "**6.** No fim, **🏁 Encerrar** mostra o resumo da noite.\n\n"
             "**No menu \"Mais opções…\" do painel:** modo da roleta (só jogos que todo mundo tem, ou até um "
-            "preço), os mais baratos para o grupo, sortear times, quem tem a Steam vinculada, incluir ou tirar "
-            "alguém e trazer o painel para baixo.\n\n"
+            "preço), os mais baratos para o grupo, sortear times, jogos com turma (do `/topa`), quem tem a "
+            "Steam vinculada, incluir ou tirar alguém e trazer o painel para baixo.\n\n"
             "Chegou no meio? **🙋 Tô jogando**. Quer tirar um jogo seu antes de sair? **📋 Meus jogos**.\n"
             "Lembrou de um jogo no meio da semana? `/lista` guarda ele para a próxima maratona.\n"
             "Todos os comandos: `/ajuda`."
@@ -1179,11 +1190,14 @@ class MaratonaCog(commands.Cog):
             "`/reclamou @pessoa` manda para o Mural da Vergonha."))
         e.add_field(name="🕹️ Jogar fora da maratona", inline=False, value=(
             "`/bora` chama o pessoal para jogar (vagas, fila e horário).\n"
+            "`/topa` pergunta quem topa um jogo e monta a **turma** dele: num `/bora` desse jogo, o bot marca "
+            "quem topou.\n"
             "`/o-que-jogar` sugere jogos para quantas pessoas vocês forem, mais **🔥 em alta**, **🎁 grátis** e o "
             "**📡 radar dos streamers**.\n"
             "`/times` sorteia times (da maratona, da sua call ou de quem você marcar)."))
         e.add_field(name="📇 Jogos e pessoas", inline=False, value=(
-            "`/jogo` mostra a ficha de um jogo: preço, avaliações, nº de jogadores e quem do servidor tem.\n"
+            "`/jogo` mostra a ficha de um jogo: preço, avaliações, nº de jogadores e quem do servidor tem "
+            "(com o botão **🗳️ Quem topa?**).\n"
             "`/lista` é a sua lista para as próximas maratonas (e a **🎁 lista do grupo**).\n"
             "`/perfil` mostra horas, mais jogados e gêneros favoritos (e é onde você **vincula a Steam**).\n"
             "`/stats` mostra os números do grupo, com o **🏆 ranking** dos jogos favoritos."))
@@ -1244,6 +1258,9 @@ class MaratonaCog(commands.Cog):
                                      aviso_modo)
         finally:
             self.girando.discard(m.id)
+        turmas = self.bot.get_cog("TurmasCog")
+        if turmas is not None:  # o jogo tinha turma (/topa)? saiu na roleta: foi jogado, a turma fecha
+            await turmas.fechar_por_jogo(m.guild_id, sorteio.jogo.nome, sorteio.jogo.appid, "maratona")
         await self.atualizar_painel(m.id)
         # O jogo anterior acabou de ser jogado: hora de dar nota para ele.
         anterior = self.db.jogo_por_ordem(m.id, sorteio.numero - 1)

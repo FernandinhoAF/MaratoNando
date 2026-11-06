@@ -71,7 +71,3 @@ def linhas_sobre(detalhes: dict, avaliacoes: dict | None, faixa: tuple[int, int]
         linhas.append(f"📅 Lançamento: {lancamento}")
     return linhas
 
-
-def url_capa(appid: int | None) -> str | None:
-    """Imagem de capa da loja da Steam (a mesma do topo da página do jogo)."""
-    return f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg" if appid else None

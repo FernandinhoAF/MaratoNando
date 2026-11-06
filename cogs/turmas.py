@@ -172,7 +172,8 @@ class TurmasCog(commands.Cog):
                           color=COR_PAINEL if aberta else discord.Color.dark_grey())
         if t["appid"]:
             e.url = f"https://store.steampowered.com/app/{t['appid']}/"
-            e.set_image(url=turmas.url_capa(t["appid"]))
+        if t["capa"]:  # o link oficial da imagem (o endereço "montado" pelo número não vale para jogos novos)
+            e.set_image(url=t["capa"])
         e.add_field(name="🗳️ Respostas", value="\n".join(turmas.linhas_respostas(r))[:1024], inline=False)
         if aberta and turma_id in self.info_steam:
             e.add_field(name="💰 Para quem topou", value=self.info_steam[turma_id][:1024], inline=False)
@@ -184,7 +185,7 @@ class TurmasCog(commands.Cog):
         """Busca na Steam (uma vez por turma) a descrição e as informações do jogo, e põe na enquete."""
         steam = self.bot.get_cog("SteamCog")
         t = self.db.turma(turma_id)
-        if steam is None or t is None or not t["appid"] or t["descricao"] or t["ficha"]:
+        if steam is None or t is None or not t["appid"] or t["capa"]:  # já buscou (enquetes antigas, sem capa, buscam de novo)
             return
         try:
             detalhes = await steam.loja.detalhes(t["appid"], idioma="brazilian")
@@ -198,7 +199,8 @@ class TurmasCog(commands.Cog):
         faixa = (linha["minimo"], linha["maximo"]) if linha is not None and linha["maximo"] else None
         faixa = faixa or extrair_de_detalhes(detalhes)
         self.db.definir_ficha_turma(turma_id, ficha.descricao_curta(detalhes) or None,
-                                    "\n".join(turmas.linhas_sobre(detalhes, avaliacoes, faixa)))
+                                    "\n".join(turmas.linhas_sobre(detalhes, avaliacoes, faixa)),
+                                    detalhes.get("header_image") or None)
         await self.atualizar_mensagem(turma_id)
 
     async def preparar(self, turma_id: int) -> None:

@@ -63,7 +63,6 @@ def test_textos():
     assert turmas.resumo_painel([]) is None
     assert turmas.resumo_painel([("A", 5), ("B", 3), ("C", 2), ("D", 1)]) == \
         "**A** (5 🙋) · **B** (3 🙋) · **C** (2 🙋) · e mais 1"
-    assert turmas.url_capa(None) is None and "620" in turmas.url_capa(620)
 
 
 DETALHES_PEAK = {
@@ -72,6 +71,7 @@ DETALHES_PEAK = {
     "categories": [{"id": 2}, {"id": 38}], "is_free": False,
     "price_overview": {"final_formatted": "R$ 18,99", "discount_percent": 0},
     "release_date": {"date": "16 jun. 2025", "coming_soon": False},
+    "header_image": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3527290/abc/header.jpg",
 }
 
 
@@ -91,7 +91,8 @@ def test_ficha_guardada_na_turma():
     db = Database(":memory:")
     t, _ = db.abrir_turma(G, "PEAK", 3527290, ANA)
     assert db.turma(t)["descricao"] is None
-    db.definir_ficha_turma(t, "Escalem a montanha.", "🏷️ Aventura")
+    db.definir_ficha_turma(t, "Escalem a montanha.", "🏷️ Aventura", "https://cdn/peak/header.jpg")
     db.abrir_turma(G, "PEAK", 3527290, BIA)  # perguntar de novo não apaga a ficha
-    assert (db.turma(t)["descricao"], db.turma(t)["ficha"]) == ("Escalem a montanha.", "🏷️ Aventura")
+    assert tuple(db.turma(t)[c] for c in ("descricao", "ficha", "capa")) == \
+        ("Escalem a montanha.", "🏷️ Aventura", "https://cdn/peak/header.jpg")
     db.fechar()

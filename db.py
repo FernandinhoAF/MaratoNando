@@ -361,6 +361,7 @@ MIGRACOES = [
     ("maratonas", "modo_preco", "INTEGER"),              # preço máximo do modo "ate_preco", em centavos
     ("turmas", "descricao", "TEXT"),                     # descrição curta do jogo (Steam, em português)
     ("turmas", "ficha", "TEXT"),                         # gênero · jogadores · modos · preço · avaliações
+    ("turmas", "capa", "TEXT"),                          # link da imagem do jogo (header_image da Steam)
 ]
 
 MINUTOS_ENTRE_PINGS = 30  # o cargo é marcado no máximo uma vez a cada 30 minutos
@@ -1657,9 +1658,11 @@ class Database:
     def turma(self, turma_id: int) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM turmas WHERE id = ?", (turma_id,)).fetchone()
 
-    def definir_ficha_turma(self, turma_id: int, descricao: str | None, ficha: str | None) -> None:
+    def definir_ficha_turma(self, turma_id: int, descricao: str | None, ficha: str | None,
+                            capa: str | None = None) -> None:
         with self.conn:
-            self.conn.execute("UPDATE turmas SET descricao = ?, ficha = ? WHERE id = ?", (descricao, ficha, turma_id))
+            self.conn.execute("UPDATE turmas SET descricao = ?, ficha = ?, capa = ? WHERE id = ?",
+                              (descricao, ficha, capa, turma_id))
 
     def definir_mensagem_turma(self, turma_id: int, channel_id: int, message_id: int) -> None:
         with self.conn:

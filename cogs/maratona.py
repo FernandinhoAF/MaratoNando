@@ -1190,14 +1190,14 @@ class MaratonaCog(commands.Cog):
             "`/reclamou @pessoa` manda para o Mural da Vergonha."))
         e.add_field(name="🕹️ Jogar fora da maratona", inline=False, value=(
             "`/bora` chama o pessoal para jogar (vagas, fila e horário).\n"
-            "`/topa` pergunta quem topa um jogo e monta a **turma** dele: num `/bora` desse jogo, o bot marca "
-            "quem topou.\n"
+            "`/topa` sonda quem teria interesse num jogo (não é chamado para agora) e monta a **turma** dele: "
+            "quando alguém fizer um `/bora` desse jogo, o bot marca quem topou.\n"
             "`/o-que-jogar` sugere jogos para quantas pessoas vocês forem, mais **🔥 em alta**, **🎁 grátis** e o "
             "**📡 radar dos streamers**.\n"
             "`/times` sorteia times (da maratona, da sua call ou de quem você marcar)."))
         e.add_field(name="📇 Jogos e pessoas", inline=False, value=(
             "`/jogo` mostra a ficha de um jogo: preço, avaliações, nº de jogadores e quem do servidor tem "
-            "(com o botão **🗳️ Quem topa?**).\n"
+            "(com o botão **🗳️ Quem teria interesse?**).\n"
             "`/lista` é a sua lista para as próximas maratonas (e a **🎁 lista do grupo**).\n"
             "`/perfil` mostra horas, mais jogados e gêneros favoritos (e é onde você **vincula a Steam**).\n"
             "`/stats` mostra os números do grupo, com o **🏆 ranking** dos jogos favoritos."))

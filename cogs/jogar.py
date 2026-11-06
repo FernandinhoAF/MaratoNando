@@ -125,7 +125,7 @@ class FichaView(discord.ui.View):
         if adicionados and maratona_cog is not None:
             await maratona_cog.atualizar_painel(m.id)
 
-    @discord.ui.button(label="Quem topa?", emoji="🗳️", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Quem teria interesse?", emoji="🗳️", style=discord.ButtonStyle.primary)
     async def topa(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         """Pergunta no canal quem topa jogar esse jogo (monta a turma)."""
         turmas = self.cog.cog_ou_erro("TurmasCog")

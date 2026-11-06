@@ -57,8 +57,8 @@ def test_turmas_abertas_em_ordem_de_quem_tem_mais_gente():
 
 def test_textos():
     r = {"topo": [ANA, BIA], "talvez": [], "passo": [CAIO]}
-    assert turmas.linhas_respostas(r) == [f"🙋 **Topam (2)**: <@{ANA}> <@{BIA}>", "🤔 **Talvez (0)**: —",
-                                         f"🙅 **Passam (1)**: <@{CAIO}>"]
+    assert turmas.linhas_respostas(r) == [f"🙋 **Topariam (2)**: <@{ANA}> <@{BIA}>", "🤔 **Talvez (0)**: —",
+                                         f"🙅 **Não curtem (1)**: <@{CAIO}>"]
     assert turmas.para_marcar(r, tirar=ANA) == [BIA]          # quem chama não é marcado; passo nunca
     assert turmas.resumo_painel([]) is None
     assert turmas.resumo_painel([("A", 5), ("B", 3), ("C", 2), ("D", 1)]) == \

@@ -2,7 +2,7 @@
 
 Como funciona:
   1. Alguém pergunta quem topa jogar um jogo (/topa ou o botão 🗳️ da ficha do /jogo).
-  2. Cada um responde 🙋 Topo · 🤔 Talvez · 🙅 Passo. Quem topa entra na turma do jogo.
+  2. Cada um responde 🙋 Eu toparia · 🤔 Talvez · 🙅 Não curto. Quem topa entra na turma do jogo.
   3. A turma é chamada (marcada) quando alguém faz um /bora desse jogo, pelo botão 📣 da enquete
      (que abre o /bora) ou quando o jogo sai na roleta de uma maratona. Aí ela fecha: o jogo foi jogado.
 
@@ -16,15 +16,15 @@ from jogadores import faixa_texto
 
 # resposta → (rótulo do botão, emoji, título da linha na enquete)
 RESPOSTAS = {
-    "topo": ("Topo", "🙋", "Topam"),
+    "topo": ("Eu toparia", "🙋", "Topariam"),
     "talvez": ("Talvez", "🤔", "Talvez"),
-    "passo": ("Passo", "🙅", "Passam"),
+    "passo": ("Não curto", "🙅", "Não curtem"),
 }
 MAX_TURMAS_NO_PAINEL = 3
 
 
 def linhas_respostas(respostas: dict[str, list[int]]) -> list[str]:
-    """Uma linha por resposta: "🙋 **Topam (2)**: <@1> <@2>"."""
+    """Uma linha por resposta: "🙋 **Topariam (2)**: <@1> <@2>"."""
     linhas = []
     for chave, (_, emoji, titulo) in RESPOSTAS.items():
         ids = respostas.get(chave, [])
@@ -33,7 +33,7 @@ def linhas_respostas(respostas: dict[str, list[int]]) -> list[str]:
 
 
 def para_marcar(respostas: dict[str, list[int]], tirar: int | None = None) -> list[int]:
-    """Quem a chamada marca: só quem topou (nunca quem disse talvez ou passo), menos quem está chamando."""
+    """Quem a chamada marca: só quem topou (nunca quem disse talvez ou não curto), menos quem está chamando."""
     return [u for u in respostas.get("topo", []) if u != tirar]
 
 

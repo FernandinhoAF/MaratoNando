@@ -1,8 +1,8 @@
 """🗳️ "Quem topa?": testa se o pessoal jogaria um jogo e monta a turma dele.
 
-  • /topa jogo [quando] [marcar_cargo]  (ou o botão 🗳️ Quem topa? da ficha do /jogo) posta a enquete,
+  • /topa jogo [quando] [marcar_cargo]  (ou o botão 🗳️ Quem teria interesse? da ficha do /jogo) posta a enquete,
     marcando o cargo de jogos para o pessoal vir votar (no máximo uma vez a cada 30 min, como o /bora).
-  • Cada um responde 🙋 Topo · 🤔 Talvez · 🙅 Passo (dá para mudar de ideia). Quem topa entra na turma.
+  • Cada um responde 🙋 Eu toparia · 🤔 Talvez · 🙅 Não curto (dá para mudar de ideia). Quem topa entra na turma.
   • A enquete mostra do que se trata o jogo (descrição, gênero, nº de jogadores, modos, preço e
     avaliações, da Steam em português) e, com a chave da Steam, quem da turma já tem e quanto falta.
   • A turma é chamada (o bot marca só quem topou) quando:
@@ -75,14 +75,14 @@ def view_turma(turma_id: int) -> discord.ui.View:
     return view
 
 
-class QuandoModal(discord.ui.Modal, title="Quem topa?"):
+class QuandoModal(discord.ui.Modal, title="Quem teria interesse?"):
     """Botão 🗳️ da ficha do /jogo: pergunta (opcionalmente) quando seria."""
 
-    quando = discord.ui.TextInput(label="Quando seria? (opcional)", placeholder="ex.: sábado à noite",
+    quando = discord.ui.TextInput(label="Ideia de quando? (opcional)", placeholder="ex.: no fim de semana",
                                   required=False, max_length=60)
 
     def __init__(self, cog: "TurmasCog", nome: str, appid: Optional[int]) -> None:
-        super().__init__(title=f"Quem topa {nome}?"[:45])
+        super().__init__(title=f"Interesse em {nome}?"[:45])
         self.cog, self.nome, self.appid = cog, nome, appid
 
     async def on_error(self, interaction, erro) -> None:
@@ -159,16 +159,17 @@ class TurmasCog(commands.Cog):
         r = self.db.respostas_turma(turma_id)
         aberta = t["fechada_em"] is None
         # Primeiro do que se trata o jogo (para quem não conhece decidir), depois as respostas.
-        partes = [f"<@{t['autor_id']}> quer saber quem topa jogar **{t['nome']}**."]
+        partes = [f"📋 **Só uma sondagem, não é para jogar agora!** <@{t['autor_id']}> quer saber quem "
+                  f"teria interesse em jogar **{t['nome']}** um dia desses."]
         if t["quando"]:
-            partes.append(f"🗓️ **Quando:** {t['quando']}")
+            partes.append(f"🗓️ **Ideia de quando:** {t['quando']}")
         if t["descricao"]:
             partes.append(f"\n> {t['descricao']}")
         if t["ficha"]:
             partes.append("\n" + t["ficha"])
         if not aberta:
             partes.append(f"\n✅ {FECHADA_POR.get(t['fechada_por'], 'Essa turma já jogou.')}")
-        e = discord.Embed(title=f"🗳️ Quem topa {t['nome']}?" if aberta else f"✅ {t['nome']}: turma chamada",
+        e = discord.Embed(title=f"🗳️ Quem teria interesse em {t['nome']}?" if aberta else f"✅ {t['nome']}: turma chamada",
                           description="\n".join(partes)[:4096],
                           color=COR_PAINEL if aberta else discord.Color.dark_grey())
         if t["appid"]:
@@ -178,8 +179,9 @@ class TurmasCog(commands.Cog):
         e.add_field(name="🗳️ Respostas", value="\n".join(turmas.linhas_respostas(r))[:1024], inline=False)
         if aberta and turma_id in self.info_steam:
             e.add_field(name="💰 Para quem topou", value=self.info_steam[turma_id][:1024], inline=False)
-        e.set_footer(text=("Quem clica 🙋 Topo entra na turma: num /bora desse jogo (ou no 📣), o bot marca "
-                           "vocês. Só quem topou é marcado." if aberta else "Para perguntar de novo: /topa"))
+        e.set_footer(text=("É só para saber o interesse: ninguém precisa entrar em call agora. Quem clica 🙋 Eu toparia "
+                           "entra na turma, e quando alguém for jogar (/bora desse jogo ou 📣), o bot marca vocês."
+                           if aberta else "Para perguntar de novo: /topa"))
         return e
 
     async def buscar_ficha(self, turma_id: int) -> None:
@@ -248,8 +250,9 @@ class TurmasCog(commands.Cog):
         turma_id, nova = self.db.abrir_turma(interaction.guild_id, nome, appid, interaction.user.id, quando)
         nome = self.db.turma(turma_id)["nome"]
         quem = getattr(interaction.user, "display_name", interaction.user.name)
-        texto = (f"🗳️ **{quem} quer saber: quem topa jogar {nome}?**" if nova else
-                 f"🗳️ **{quem} perguntou de novo: quem topa jogar {nome}?** (a turma continua com os votos de antes)")
+        texto = (f"🗳️ **{quem} quer saber quem teria interesse em jogar {nome}** (não é pra agora, só sondagem!)"
+                 if nova else
+                 f"🗳️ **{quem} perguntou de novo quem teria interesse em {nome}** (não é pra agora; os votos de antes continuam)")
         if marcar_cargo:
             mencao, permissao, aviso = mencao_do_cargo(self.db, interaction.guild_id)
         else:
@@ -262,7 +265,7 @@ class TurmasCog(commands.Cog):
             await interaction.followup.send(f"Enquete postada{aviso}.", ephemeral=True)
         self.em_segundo_plano(self.preparar(turma_id))
 
-    @app_commands.command(name="topa", description="Pergunta quem topa jogar um jogo e monta a turma dele.")
+    @app_commands.command(name="topa", description="Sonda quem teria interesse em jogar um jogo (não é chamado pra agora).")
     @app_commands.describe(jogo="Qual jogo (aparecem sugestões da Steam enquanto digita)",
                            quando="Opcional: quando seria (ex.: sábado à noite)",
                            marcar_cargo="Marcar o cargo de jogos para o pessoal votar? (padrão: sim)")
@@ -299,14 +302,15 @@ class TurmasCog(commands.Cog):
             pode = (interaction.user.id == t["autor_id"] or self.db.resposta_turma(turma_id, interaction.user.id) == "topo"
                     or (perms and perms.manage_guild))
             if not pode:
-                raise ErroMaratona("Quem chama a turma é quem perguntou ou quem topou. Clique em 🙋 **Topo** primeiro!")
+                raise ErroMaratona("Quem chama a turma é quem perguntou ou quem topou. Clique em 🙋 **Eu toparia** primeiro!")
             await interaction.response.send_modal(ChamarTurmaModal(self, turma_id, t["nome"]))
             return
         self.db.responder_turma(turma_id, interaction.user.id, acao)
         await interaction.response.edit_message(embed=self.embed(turma_id), allowed_mentions=SEM_PING)
         if acao == "topo":
             await interaction.followup.send(
-                f"🙋 Você está na turma de **{t['nome']}**. Quando alguém chamar (num `/bora` desse jogo ou no "
+                f"🙋 Anotado: você teria interesse em **{t['nome']}** e está na turma. Não precisa fazer nada agora: "
+                "quando alguém for jogar (num `/bora` desse jogo ou no "
                 "📣 da enquete), o bot te marca.", ephemeral=True)
         self.em_segundo_plano(self.calcular_steam(turma_id))
 

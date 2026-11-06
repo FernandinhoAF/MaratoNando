@@ -2,7 +2,8 @@
 
   • /topa jogo [quando]  (ou o botão 🗳️ Quem topa? da ficha do /jogo) posta a enquete.
   • Cada um responde 🙋 Topo · 🤔 Talvez · 🙅 Passo (dá para mudar de ideia). Quem topa entra na turma.
-  • Com a Steam ligada, a enquete mostra quem da turma já tem o jogo e quanto falta comprar.
+  • A enquete mostra do que se trata o jogo (descrição, gênero, nº de jogadores, modos, preço e
+    avaliações, da Steam em português) e, com a chave da Steam, quem da turma já tem e quanto falta.
   • A turma é chamada (o bot marca só quem topou) quando:
       – alguém faz um /bora desse jogo;
       – alguém da turma clica em 📣 Chamar a turma (abre um /bora do jogo);
@@ -24,8 +25,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import ficha
 import turmas
 from biblioteca import resumo_grupo
+from jogadores import extrair_de_detalhes
 from cogs.maratona import SEM_PING, autocompletar_jogo, texto_resultado, tratar_erro
 from db import Database, ErroMaratona, Maratona, limpar_nome
 from marca import COR_PAINEL
@@ -154,24 +157,54 @@ class TurmasCog(commands.Cog):
         t = self.db.turma(turma_id)
         r = self.db.respostas_turma(turma_id)
         aberta = t["fechada_em"] is None
+        # Primeiro do que se trata o jogo (para quem não conhece decidir), depois as respostas.
         partes = [f"<@{t['autor_id']}> quer saber quem topa jogar **{t['nome']}**."]
         if t["quando"]:
             partes.append(f"🗓️ **Quando:** {t['quando']}")
-        partes.append("")
-        partes += turmas.linhas_respostas(r)
+        if t["descricao"]:
+            partes.append(f"\n> {t['descricao']}")
+        if t["ficha"]:
+            partes.append("\n" + t["ficha"])
         if not aberta:
             partes.append(f"\n✅ {FECHADA_POR.get(t['fechada_por'], 'Essa turma já jogou.')}")
         e = discord.Embed(title=f"🗳️ Quem topa {t['nome']}?" if aberta else f"✅ {t['nome']}: turma chamada",
-                          description="\n".join(partes),
+                          description="\n".join(partes)[:4096],
                           color=COR_PAINEL if aberta else discord.Color.dark_grey())
         if t["appid"]:
             e.url = f"https://store.steampowered.com/app/{t['appid']}/"
             e.set_image(url=turmas.url_capa(t["appid"]))
+        e.add_field(name="🗳️ Respostas", value="\n".join(turmas.linhas_respostas(r))[:1024], inline=False)
         if aberta and turma_id in self.info_steam:
             e.add_field(name="💰 Para quem topou", value=self.info_steam[turma_id][:1024], inline=False)
         e.set_footer(text=("Quem clica 🙋 Topo entra na turma: num /bora desse jogo (ou no 📣), o bot marca "
                            "vocês. Só quem topou é marcado." if aberta else "Para perguntar de novo: /topa"))
         return e
+
+    async def buscar_ficha(self, turma_id: int) -> None:
+        """Busca na Steam (uma vez por turma) a descrição e as informações do jogo, e põe na enquete."""
+        steam = self.bot.get_cog("SteamCog")
+        t = self.db.turma(turma_id)
+        if steam is None or t is None or not t["appid"] or t["descricao"] or t["ficha"]:
+            return
+        try:
+            detalhes = await steam.loja.detalhes(t["appid"], idioma="brazilian")
+            if not detalhes:
+                return
+            avaliacoes = await steam.loja.avaliacoes(t["appid"])  # None se a Steam não mandar agora
+        except Exception as exc:  # informação extra: sem ela, a enquete continua funcionando
+            log.info("Sem a ficha de %s para a turma %s: %s", t["appid"], turma_id, exc)
+            return
+        linha = self.db.jogadores_de([t["appid"]]).get(t["appid"])
+        faixa = (linha["minimo"], linha["maximo"]) if linha is not None and linha["maximo"] else None
+        faixa = faixa or extrair_de_detalhes(detalhes)
+        self.db.definir_ficha_turma(turma_id, ficha.descricao_curta(detalhes) or None,
+                                    "\n".join(turmas.linhas_sobre(detalhes, avaliacoes, faixa)))
+        await self.atualizar_mensagem(turma_id)
+
+    async def preparar(self, turma_id: int) -> None:
+        """Depois de postar a enquete: primeiro a ficha do jogo, depois quem tem / quanto falta."""
+        await self.buscar_ficha(turma_id)
+        await self.calcular_steam(turma_id)
 
     async def calcular_steam(self, turma_id: int) -> None:
         """Atualiza, em segundo plano, quem da turma já tem o jogo e quanto falta comprar."""
@@ -214,7 +247,7 @@ class TurmasCog(commands.Cog):
                                                 allowed_mentions=SEM_PING)
         msg = await interaction.original_response()
         self.db.definir_mensagem_turma(turma_id, msg.channel.id, msg.id)
-        self.em_segundo_plano(self.calcular_steam(turma_id))
+        self.em_segundo_plano(self.preparar(turma_id))
 
     @app_commands.command(name="topa", description="Pergunta quem topa jogar um jogo e monta a turma dele.")
     @app_commands.describe(jogo="Qual jogo (aparecem sugestões da Steam enquanto digita)",

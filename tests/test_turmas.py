@@ -64,3 +64,34 @@ def test_textos():
     assert turmas.resumo_painel([("A", 5), ("B", 3), ("C", 2), ("D", 1)]) == \
         "**A** (5 🙋) · **B** (3 🙋) · **C** (2 🙋) · e mais 1"
     assert turmas.url_capa(None) is None and "620" in turmas.url_capa(620)
+
+
+DETALHES_PEAK = {
+    "name": "PEAK", "short_description": "Escalem a <b>montanha</b> juntos &amp; sobrevivam.",
+    "genres": [{"description": "Aventura"}, {"description": "Indie"}],
+    "categories": [{"id": 2}, {"id": 38}], "is_free": False,
+    "price_overview": {"final_formatted": "R$ 18,99", "discount_percent": 0},
+    "release_date": {"date": "16 jun. 2025", "coming_soon": False},
+}
+
+
+def test_sobre_o_jogo():
+    avaliacoes = {"total_reviews": 1000, "total_positive": 960, "review_score_desc": "Overwhelmingly Positive"}
+    assert turmas.linhas_sobre(DETALHES_PEAK, avaliacoes, (1, 4)) == [
+        "🏷️ Aventura · Indie",
+        "👥 1 a 4 jogadores · Single-player · Co-op online",
+        "💰 **R$ 18,99** · 👍 Extremamente positivas · 96% de 1.000 avaliações",
+        "📅 Lançamento: 16 jun. 2025",
+    ]
+    # Sem avaliações (a Steam não mandou) e sem nº de jogadores: o resto aparece igual
+    assert turmas.linhas_sobre({"is_free": True}, None, None) == ["💰 🆓 Grátis"]
+
+
+def test_ficha_guardada_na_turma():
+    db = Database(":memory:")
+    t, _ = db.abrir_turma(G, "PEAK", 3527290, ANA)
+    assert db.turma(t)["descricao"] is None
+    db.definir_ficha_turma(t, "Escalem a montanha.", "🏷️ Aventura")
+    db.abrir_turma(G, "PEAK", 3527290, BIA)  # perguntar de novo não apaga a ficha
+    assert (db.turma(t)["descricao"], db.turma(t)["ficha"]) == ("Escalem a montanha.", "🏷️ Aventura")
+    db.fechar()

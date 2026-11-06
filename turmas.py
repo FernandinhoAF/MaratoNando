@@ -11,6 +11,9 @@ Módulo puro (sem Discord), testado em tests/test_turmas.py.
 
 from __future__ import annotations
 
+import ficha
+from jogadores import faixa_texto
+
 # resposta → (rótulo do botão, emoji, título da linha na enquete)
 RESPOSTAS = {
     "topo": ("Topo", "🙋", "Topam"),
@@ -47,6 +50,26 @@ def resumo_painel(turmas: list[tuple[str, int]], limite: int = MAX_TURMAS_NO_PAI
     if len(turmas) > limite:
         texto += f" · e mais {len(turmas) - limite}"
     return texto
+
+
+def linhas_sobre(detalhes: dict, avaliacoes: dict | None, faixa: tuple[int, int] | None) -> list[str]:
+    """As informações do jogo que vão na enquete, a partir do /api/appdetails da Steam (em português)."""
+    linhas = []
+    generos = ficha.generos(detalhes, 3)
+    if generos:
+        linhas.append("🏷️ " + " · ".join(generos))
+    jogo = [faixa_texto(faixa)] if faixa else []
+    jogo += ficha.modos_de_jogo(detalhes)[:3]
+    if jogo:
+        linhas.append("👥 " + " · ".join(jogo))
+    preco = f"💰 {ficha.preco_texto(detalhes)}"
+    if avaliacoes:
+        preco += f" · 👍 {ficha.avaliacao_texto(avaliacoes)}"
+    linhas.append(preco)
+    lancamento = ficha.lancamento(detalhes)
+    if lancamento:
+        linhas.append(f"📅 Lançamento: {lancamento}")
+    return linhas
 
 
 def url_capa(appid: int | None) -> str | None:

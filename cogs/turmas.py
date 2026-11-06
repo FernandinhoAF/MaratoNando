@@ -1,6 +1,7 @@
 """🗳️ "Quem topa?": testa se o pessoal jogaria um jogo e monta a turma dele.
 
-  • /topa jogo [quando]  (ou o botão 🗳️ Quem topa? da ficha do /jogo) posta a enquete.
+  • /topa jogo [quando] [marcar_cargo]  (ou o botão 🗳️ Quem topa? da ficha do /jogo) posta a enquete,
+    marcando o cargo de jogos para o pessoal vir votar (no máximo uma vez a cada 30 min, como o /bora).
   • Cada um responde 🙋 Topo · 🤔 Talvez · 🙅 Passo (dá para mudar de ideia). Quem topa entra na turma.
   • A enquete mostra do que se trata o jogo (descrição, gênero, nº de jogadores, modos, preço e
     avaliações, da Steam em português) e, com a chave da Steam, quem da turma já tem e quanto falta.
@@ -29,7 +30,7 @@ import ficha
 import turmas
 from biblioteca import resumo_grupo
 from jogadores import extrair_de_detalhes
-from cogs.maratona import SEM_PING, autocompletar_jogo, texto_resultado, tratar_erro
+from cogs.maratona import SEM_PING, autocompletar_jogo, mencao_do_cargo, texto_resultado, tratar_erro
 from db import Database, ErroMaratona, Maratona, limpar_nome
 from marca import COR_PAINEL
 from nomes import ler_escolha, valor_escolha
@@ -235,8 +236,12 @@ class TurmasCog(commands.Cog):
             log.warning("Não consegui atualizar a enquete da turma %s: %s", turma_id, exc)
 
     async def perguntar(self, interaction: discord.Interaction, nome: str, appid: Optional[int],
-                        quando: Optional[str]) -> None:
-        """Posta a enquete (se o jogo já tem turma aberta, posta de novo a mesma, com os votos)."""
+                        quando: Optional[str], marcar_cargo: bool = True) -> None:
+        """Posta a enquete (se o jogo já tem turma aberta, posta de novo a mesma, com os votos).
+
+        Marca o cargo de jogos (/config cargo-jogos) para o pessoal vir votar, com o mesmo limite
+        do /bora e da maratona: no máximo uma vez a cada 30 minutos.
+        """
         nome = limpar_nome(nome)
         if not nome:
             raise ErroMaratona("Qual jogo? Escreva o nome.")
@@ -245,18 +250,26 @@ class TurmasCog(commands.Cog):
         quem = getattr(interaction.user, "display_name", interaction.user.name)
         texto = (f"🗳️ **{quem} quer saber: quem topa jogar {nome}?**" if nova else
                  f"🗳️ **{quem} perguntou de novo: quem topa jogar {nome}?** (a turma continua com os votos de antes)")
-        await interaction.response.send_message(texto, embed=self.embed(turma_id), view=view_turma(turma_id),
-                                                allowed_mentions=SEM_PING)
+        if marcar_cargo:
+            mencao, permissao, aviso = mencao_do_cargo(self.db, interaction.guild_id)
+        else:
+            mencao, permissao, aviso = "", SEM_PING, ""
+        await interaction.response.send_message(mencao + texto, embed=self.embed(turma_id),
+                                                view=view_turma(turma_id), allowed_mentions=permissao)
         msg = await interaction.original_response()
         self.db.definir_mensagem_turma(turma_id, msg.channel.id, msg.id)
+        if aviso:
+            await interaction.followup.send(f"Enquete postada{aviso}.", ephemeral=True)
         self.em_segundo_plano(self.preparar(turma_id))
 
     @app_commands.command(name="topa", description="Pergunta quem topa jogar um jogo e monta a turma dele.")
     @app_commands.describe(jogo="Qual jogo (aparecem sugestões da Steam enquanto digita)",
-                           quando="Opcional: quando seria (ex.: sábado à noite)")
+                           quando="Opcional: quando seria (ex.: sábado à noite)",
+                           marcar_cargo="Marcar o cargo de jogos para o pessoal votar? (padrão: sim)")
     @app_commands.guild_only()
     async def cmd_topa(self, interaction: discord.Interaction, jogo: app_commands.Range[str, 1, 100],
-                       quando: Optional[app_commands.Range[str, 1, 60]] = None) -> None:
+                       quando: Optional[app_commands.Range[str, 1, 60]] = None,
+                       marcar_cargo: bool = True) -> None:
         nome, appid = ler_escolha(jogo)
         steam = self.bot.get_cog("SteamCog")
         if steam is not None:
@@ -269,7 +282,7 @@ class TurmasCog(commands.Cog):
                         appid, nome = achado
             except Exception as exc:  # Steam fora do ar ou lenta: a enquete sai sem ela
                 log.info("Não reconheci %r na Steam: %s", nome, exc)
-        await self.perguntar(interaction, nome, appid, quando)
+        await self.perguntar(interaction, nome, appid, quando, marcar_cargo)
 
     @cmd_topa.autocomplete("jogo")
     async def _autocompletar_topa(self, interaction: discord.Interaction, atual: str):
